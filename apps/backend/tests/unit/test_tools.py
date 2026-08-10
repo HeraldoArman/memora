@@ -389,6 +389,50 @@ class TestToolContext:
         ctx = _ctx_with_context(FaceObservation(embedding=emb))
         assert ctx.current_face_embedding() is emb
 
+    def test_unknown_embedding_cached(self) -> None:
+        """Unknown face embedding is cached so register_face works after person leaves."""
+        emb = np.ones(512, dtype=np.float32)
+        ctx = _ctx_with_context(FaceObservation(embedding=emb, is_known=False))
+        assert ctx.current_face_embedding() is emb
+        # Person leaves frame — context cleared
+        ctx.current_context = None
+        # Cache should still serve the embedding
+        assert ctx.current_face_embedding() is emb
+
+    def test_cached_embedding_expires(self) -> None:
+        """Cached unknown embedding expires after TTL."""
+        emb = np.ones(512, dtype=np.float32)
+        ctx = _ctx_with_context(FaceObservation(embedding=emb, is_known=False))
+        ctx.current_face_embedding()  # populate cache
+        # Expire the deadline
+        ctx._unknown_embedding_deadline = 0.0
+        ctx.current_context = None
+        assert ctx.current_face_embedding() is None
+
+    def test_known_face_not_cached_as_unknown(self) -> None:
+        """A known face should not populate the unknown cache."""
+        emb = np.ones(512, dtype=np.float32)
+        ctx = _ctx_with_context(
+            FaceObservation(embedding=emb, is_known=True, person_id="p1", name="Asep")
+        )
+        ctx.current_face_embedding()  # known — should NOT cache
+        assert ctx._last_unknown_embedding is None
+        ctx.current_context = None
+        assert ctx.current_face_embedding() is None  # no fallback
+
+    def test_cache_refreshed_on_new_unknown(self) -> None:
+        """A second unknown face refreshes the cache with the latest embedding."""
+        emb1 = np.ones(512, dtype=np.float32)
+        emb2 = np.zeros(512, dtype=np.float32)
+        ctx = _ctx_with_context(FaceObservation(embedding=emb1, is_known=False))
+        ctx.current_face_embedding()
+        ctx.current_context = CurrentContext(
+            observations=[FaceObservation(embedding=emb2, is_known=False)]
+        )
+        assert ctx.current_face_embedding() is emb2  # latest wins
+        ctx.current_context = None
+        assert ctx.current_face_embedding() is emb2  # cache holds latest
+
     def test_device_snapshot(self) -> None:
         assert _ctx().device_snapshot() == {}
         ctx = _ctx_with_context(DeviceObservation(battery_level=55, wifi_connected=False))

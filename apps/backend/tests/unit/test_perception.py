@@ -42,9 +42,30 @@ class TestFuse:
         assert "baterai 72%" in ctx.device and "wifi on" in ctx.device
         assert 0.0 < ctx.confidence <= 1.0
 
-    def test_unknown_face_not_visible(self) -> None:
+    def test_unknown_face_surfaced(self) -> None:
+        """Unknown faces surface as 'Orang tidak dikenali' so the agent can ask to register."""
         ctx = fuse([FaceObservation(confidence=0.5, is_known=False, embedding=None)])
-        assert ctx.visible_people == []
+        assert ctx.visible_people == ["Orang tidak dikenali"]
+
+    def test_multiple_unknown_faces_deduped(self) -> None:
+        """Multiple unknown faces in one window surface as a single 'Orang tidak dikenali'."""
+        ctx = fuse(
+            [
+                FaceObservation(confidence=0.4, is_known=False, embedding=None),
+                FaceObservation(confidence=0.3, is_known=False, embedding=None),
+            ]
+        )
+        assert ctx.visible_people == ["Orang tidak dikenali"]
+
+    def test_known_plus_unknown_surfaced(self) -> None:
+        """Known person + unknown person both surface."""
+        ctx = fuse(
+            [
+                FaceObservation(person_id="p1", name="Asep", confidence=0.9, is_known=True),
+                FaceObservation(confidence=0.4, is_known=False, embedding=None),
+            ]
+        )
+        assert ctx.visible_people == ["Asep", "Orang tidak dikenali"]
 
     def test_latest_scene_wins(self) -> None:
         ctx = fuse(
