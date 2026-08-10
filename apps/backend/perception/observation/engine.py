@@ -94,13 +94,15 @@ class ObservationEngine:
 def fuse(batch: list[Observation]) -> CurrentContext:
     """Fold a window of observations into one CurrentContext.
 
-    visible_people: dedup names from known FaceObservations (is_known=True). Latest of each
-    scalar (scene/activity/speech/device) wins. confidence = weighted mean.
+    visible_people: dedup names from known FaceObservations (is_known=True). Unknown faces
+    surface once as "Orang tidak dikenali" so the agent can ask the user to name them and
+    drive register_person/register_face. Latest of each scalar wins; confidence = weighted mean.
     """
     visible: list[str] = []
     seen: set[str] = set()
     scene = activity = speech = device = None
     weights: list[tuple[float, float]] = []  # (confidence, weight)
+    unknown_surfaced = False  # one "Orang tidak dikenali" entry per window
 
     for obs in batch:
         if isinstance(obs, FaceObservation):
@@ -108,6 +110,14 @@ def fuse(batch: list[Observation]) -> CurrentContext:
             if obs.is_known and obs.name and obs.name not in seen:
                 seen.add(obs.name)
                 visible.append(obs.name)
+            elif not obs.is_known and not unknown_surfaced:
+                # ponytail: surface unknown faces so the agent can ask "siapa ini?"
+                # and drive the register_person/register_face flow. The full PRD
+                # temporary-ID flow (face_recognition.md §11) is Phase 7; this is
+                # the minimal wire that makes the existing registration tools reachable.
+                seen.add("Orang tidak dikenali")
+                visible.append("Orang tidak dikenali")
+                unknown_surfaced = True
         elif isinstance(obs, SceneObservation):
             weights.append((obs.confidence, 1.0))
             if obs.location:
@@ -151,12 +161,17 @@ def _self_check() -> None:  # pragma: no cover
     batch = [
         FaceObservation(person_id="p1", name="Asep", confidence=0.95, is_known=True),
         FaceObservation(person_id="p2", name="Asep", confidence=0.9, is_known=True),  # dup name
+        FaceObservation(person_id=None, name=None, confidence=0.4, is_known=False),  # unknown
+        FaceObservation(
+            person_id=None, name=None, confidence=0.3, is_known=False
+        ),  # 2nd unknown, dedup
         SceneObservation(location="apotek", activity="beli obat", confidence=0.8),
         SpeechObservation(transcript="apa ini?", confidence=0.9, is_final=True),
         DeviceObservation(battery_level=72, wifi_connected=True, confidence=1.0),
     ]
     ctx = fuse(batch)
-    assert ctx.visible_people == ["Asep"], ctx.visible_people  # dedup
+    # known "Asep" + one "Orang tidak dikenali" (2nd unknown deduped)
+    assert ctx.visible_people == ["Asep", "Orang tidak dikenali"], ctx.visible_people
     assert ctx.scene == "apotek"
     assert ctx.activity == "beli obat"
     assert ctx.speech == "apa ini?"
