@@ -4,6 +4,7 @@ node_modules
 .turbo
 dist
 build
+.next
 uv.lock
 bun.lock
 *.mmd
