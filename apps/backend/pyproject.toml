@@ -17,6 +17,8 @@ dependencies = [
   "neo4j==6.2.0",
   "faiss-cpu==1.15.0",
   "livekit==1.1.14",
+  "livekit-agents==1.6.9",
+  "google-genai==2.17.0",
   "insightface==1.0.1",
   "openai-whisper==20250625",
   # Declared direct so [tool.uv.sources] can pin it to the CPU index.

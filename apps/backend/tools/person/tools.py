@@ -1,0 +1,61 @@
+"""Person tools — search/identify/register/update people.
+
+Gemini Live calls these by name; the router dispatches args here. Each returns a
+JSON-serializable dict for send_tool_response. Tools are thin service callers — no business
+logic here (that lives in services/).
+"""
+
+from __future__ import annotations
+
+from tools.registry import ToolContext
+
+
+async def search_person(args: dict, ctx: ToolContext) -> dict:
+    """Search any entity by name substring (graph)."""
+    query = args.get("query", "")
+    if not query:
+        return {"error": "query required"}
+    hits = await ctx.person_service.search_by_name(query)
+    return {"results": hits}
+
+
+async def search_person_by_face(args: dict, ctx: ToolContext) -> dict:
+    """Identify the currently visible person via the face index.
+
+    Uses the latest face observation's embedding from Working Memory (the recognizer already
+    ran). If no face observation is available, returns unknown.
+    """
+    emb = ctx.current_face_embedding()
+    if emb is None:
+        return {"person_id": None, "known": False, "possible": False, "note": "no face detected"}
+    return await ctx.person_service.search_by_face(emb)
+
+
+async def register_person(args: dict, ctx: ToolContext) -> dict:
+    """Register a new person by name."""
+    name = args.get("name")
+    if not name:
+        return {"error": "name required"}
+    node = await ctx.person_service.register_person(name=name)
+    return {"person": node}
+
+
+async def update_person(args: dict, ctx: ToolContext) -> dict:
+    """Update a person's notes."""
+    person_id = args.get("person_id")
+    if not person_id:
+        return {"error": "person_id required"}
+    notes = args.get("notes")
+    node = await ctx.person_service.update_person(person_id=person_id, notes=notes)
+    if node is None:
+        return {"error": "person not found"}
+    return {"person": node}
+
+
+# name → callable, for the registry.
+PERSON_TOOL_FUNCS = {
+    "search_person": search_person,
+    "search_person_by_face": search_person_by_face,
+    "register_person": register_person,
+    "update_person": update_person,
+}

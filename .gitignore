@@ -53,8 +53,9 @@ __pycache__/
 *.so
 .venv/
 venv/
-env/
-ENV/
+/env/
+/ENV/
+!packages/config/env/
 *.egg-info/
 .eggs/
 develop-eggs/
@@ -78,11 +79,13 @@ apps/firmware/.pioenvs/
 apps/firmware/.piolibdeps/
 
 # ML model weights (large, gitignored)
-models/insightface/*
-models/whisper/*
+models/insightface/**
+models/whisper/**
 !models/insightface/.gitkeep
 !models/whisper/.gitkeep
 !models/README.md
+# Runtime download location when running from apps/backend (FACE_MODEL_ROOT default)
+apps/backend/models/**
 
 # Misc
 *.tgz
