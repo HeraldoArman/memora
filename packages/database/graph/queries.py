@@ -10,11 +10,13 @@ persistent_storage.md graph schema. Person is the hub; other entities attach via
 
 from __future__ import annotations
 
-# Upsert a Person by person_id. MERGE is idempotent.
+# Upsert a Person by name (merge-on-name idempotency). On create, stamp a
+# person_id so identity lookups (face → person) have a stable key. Re-mentioning
+# "Asep" reuses the same node — no duplicate Person nodes fragmenting facts.
 UPSERT_PERSON = """
-MERGE (p:Person {person_id: $person_id})
-SET p.name = $name,
-    p.notes = coalesce($notes, p.notes),
+MERGE (p:Person {name: $name})
+ON CREATE SET p.person_id = $person_id
+SET p.notes = coalesce($notes, p.notes),
     p.updated_at = datetime()
 RETURN p.person_id AS person_id, p.name AS name, p.notes AS notes
 """
@@ -67,14 +69,16 @@ LIMIT $limit
 
 # Subgraph within N hops of an entity name. $hops is an int literal (code constant).
 # collect(DISTINCT m) keeps neighbor nodes in scope; rels is a list-of-lists (one per path)
-# flattened in the RETURN via reduce. Empty graph → both lists empty.
+# flattened in the RETURN via reduce. The center node n is always included (prepended to
+# nodes) so an isolated entity with no relations still appears — callers can confirm it
+# exists instead of seeing an empty graph indistinguishable from "not found".
 def knowledge_graph_cypher(hops: int = 2) -> str:
     return f"""
 MATCH (n)
 WHERE n.name = $entity OR n.person_id = $entity
 OPTIONAL MATCH path = (n)-[*1..{hops}]-(m)
 WITH n, collect(DISTINCT m) AS nodes, collect(DISTINCT relationships(path)) AS rels
-RETURN [x IN nodes | {{
+RETURN [x IN (nodes + [n]) | {{
   label: coalesce(labels(x)[0], labels(n)[0]),
   name: coalesce(x.name, n.name)
 }}] AS nodes,

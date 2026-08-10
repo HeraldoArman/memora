@@ -74,12 +74,21 @@ class MemoryService:
         facts: list[str],
         session_id: UUID | None = None,
         confidence: float | None = None,
+        confidences: list[float] | None = None,
     ) -> int:
-        """Persist extracted fact statements. No-op when empty."""
+        """Persist extracted fact statements. No-op when empty.
+
+        `confidences` (per-fact) takes precedence over the scalar `confidence` — used
+        for the first-person provenance boost, which is per-fact, not per-turn.
+        """
         if not facts:
             return 0
         sm = get_sessionmaker()
         async with sm() as db:
             return await self.fact_repo.add_many(
-                db, facts=facts, session_id=session_id, confidence=confidence
+                db,
+                facts=facts,
+                session_id=session_id,
+                confidence=confidence,
+                confidences=confidences,
             )

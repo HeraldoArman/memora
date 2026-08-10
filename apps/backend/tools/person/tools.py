@@ -56,6 +56,14 @@ async def register_face(args: dict, ctx: ToolContext) -> dict:
         row = await ctx.person_service.register_face(emb, person_id)
     except RuntimeError as exc:  # face_repo not wired
         return {"person_id": person_id, "enrolled": False, "note": str(exc)}
+    # Persist the index so enrollments survive restart. Without this the FAISS index +
+    # person_id sidecar live only in this process's memory — the API and each worker load
+    # separate copies, so faces enrolled via the tool would vanish on the next room.
+    # Guarded so tests that stub the service (face_repo stays None) don't crash on save.
+    if ctx.face_repo is not None:
+        from env import get_settings
+
+        ctx.face_repo.save(get_settings().faiss_index_path)
     return {"person_id": person_id, "enrolled": True, "face_index_row": row}
 
 

@@ -21,8 +21,10 @@ from graph.queries import (
 
 class TestStaticQueries:
     def test_upsert_person(self) -> None:
-        assert "MERGE (p:Person {person_id: $person_id})" in UPSERT_PERSON
-        assert "p.name = $name" in UPSERT_PERSON
+        # Merge-on-name idempotency: person_id stamped only ON CREATE so re-mentioning
+        # "Asep" reuses the same node instead of fragmenting facts across copies.
+        assert "MERGE (p:Person {name: $name})" in UPSERT_PERSON
+        assert "ON CREATE SET p.person_id = $person_id" in UPSERT_PERSON
         assert "updated_at" in UPSERT_PERSON
 
     def test_get_person_collects_relationships(self) -> None:
@@ -61,3 +63,5 @@ class TestQueryFactories:
         assert "[*1..3]" in cypher
         assert "collect(DISTINCT relationships(path))" in cypher
         assert "reduce(acc" in cypher
+        # center node n is always included so an isolated entity still appears
+        assert "nodes + [n]" in cypher

@@ -25,6 +25,17 @@ def _is_first_person(text: str) -> bool:
     return any(lowered.startswith(p) for p in _FIRST_PERSON)
 
 
+def first_person_boost(confidence: float, text: str) -> float:
+    """Return the confidence for a single fact, boosted if it is a first-person statement.
+
+    verify() applies the boost to a whole turn's extraction; this is the per-fact form so
+    individual facts that are first-person assertions get the provenance bump independently.
+    """
+    if text and _is_first_person(text):
+        return min(1.0, confidence + 0.1)
+    return confidence
+
+
 def verify(confidence: float, *, content: str = "") -> ConfidenceLevel:
     """Return a ConfidenceLevel for one extraction."""
     score = confidence

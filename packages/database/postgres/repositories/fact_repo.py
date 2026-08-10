@@ -21,15 +21,21 @@ class FactRepo:
         session_id: UUID | None = None,
         category: str | None = None,
         confidence: float | None = None,
+        confidences: list[float] | None = None,
     ) -> int:
+        """Persist facts. `confidence` applies to all; `confidences` (parallel to
+        `facts`) overrides per-fact when both shapes are needed (first-person boost is
+        per-fact, not per-turn). When `confidences` is given it must match len(facts)."""
+        if confidences is not None and len(confidences) != len(facts):
+            raise ValueError("confidences must align with facts")
         rows = [
             MemoryFact(
                 session_id=session_id,
                 fact=f,
                 category=category,
-                confidence=confidence,
+                confidence=confidences[i] if confidences is not None else confidence,
             )
-            for f in facts
+            for i, f in enumerate(facts)
         ]
         db.add_all(rows)
         await db.commit()

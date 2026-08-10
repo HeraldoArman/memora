@@ -45,12 +45,18 @@ async def similar_memories(args: dict, ctx: ToolContext) -> dict:
 
 
 async def memory_timeline(args: dict, ctx: ToolContext) -> dict:
-    """Timeline of recent episodic sessions, optionally filtered to a person."""
+    """Timeline of recent episodic sessions, optionally filtered to a person.
+
+    Sessions carry no person_id (episodic store is single-device, no FK to the graph).
+    So a person_id filter maps to the session's summary text — we keep episodes whose
+    summary mentions the person. Exact person_id→session linking needs a join table
+    (out of scope); this is a best-effort client-side filter over what's available.
+    """
     person_id = args.get("person_id")
     episodes = await ctx.memory_service.recent_memories(limit=50)
     if person_id:
-        # ponytail: filter client-side; no per-person session index yet
-        episodes = [e for e in episodes if person_id in str(e)]
+        needle = str(person_id).lower()
+        episodes = [e for e in episodes if needle in (e.get("summary") or "").lower()]
     return {"timeline": episodes}
 
 
