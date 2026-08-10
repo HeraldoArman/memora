@@ -64,7 +64,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Sync Python workspace
-        run: uv sync --locked
+        run: uv sync --locked --all-packages
 
       - name: Build Python packages
         run: bunx nx run-many -t build --exclude=tag:firmware
@@ -91,7 +91,7 @@ jobs:
           enable-cache: true
 
       - name: Sync Python workspace
-        run: uv sync --locked
+        run: uv sync --locked --all-packages
 
       - name: Run unit tests
         run: uv run pytest apps/backend/tests/unit/
@@ -132,7 +132,7 @@ jobs:
           enable-cache: true
 
       - name: Sync Python workspace
-        run: uv sync --locked
+        run: uv sync --locked --all-packages
 
       - name: Run migrations (alembic upgrade head)
         working-directory: packages/database
@@ -191,7 +191,7 @@ jobs:
           enable-cache: true
 
       - name: Sync Python workspace
-        run: uv sync --locked
+        run: uv sync --locked --all-packages
 
       - name: Run migrations (alembic upgrade head)
         working-directory: packages/database
