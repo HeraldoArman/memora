@@ -112,16 +112,30 @@ async def _lookup_face(embedding, face_repo) -> FaceObservation | None:
             log.debug("face repo not available; skipping identity lookup")
             return None
         result = face_repo.lookup(embedding)  # sync: faiss search is in-process
+        # Resolve person_id → name via the graph so fuse() can surface the person in
+        # CurrentContext.visible_people (it only adds known+named observations). Graph
+        # outage must NOT drop the observation — degrade to name=None and still emit.
+        name = None
+        if result.is_known and result.person_id:
+            try:
+                from graph import repository as graph_repo
+
+                profile = await graph_repo.PersonRepo().get_person(result.person_id)
+                if profile:
+                    name = profile.get("name")
+            except Exception:  # noqa: BLE001
+                log.warning("face name lookup failed for %s; keeping name=None", result.person_id)
         log.info(
-            "face lookup: %s score=%.3f known=%s possible=%s",
+            "face lookup: %s name=%s score=%.3f known=%s possible=%s",
             result.person_id or "unknown",
+            name,
             result.score,
             result.is_known,
             result.is_possible,
         )
         return FaceObservation(
             person_id=result.person_id,
-            name=None,  # name resolved downstream by PersonService if known
+            name=name,
             confidence=float(result.score),
             is_known=result.is_known,
             is_possible_match=result.is_possible,

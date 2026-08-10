@@ -29,13 +29,18 @@ log = logging.getLogger(__name__)
 class RoomSession:
     """All state for one LiveKit room (one implicit device, no multi-user)."""
 
-    agent: ReasoningAgent
     working_memory: WorkingMemory
     observation_engine: ObservationEngine
     tool_ctx: ToolContext
+    # agent is wired last (create() builds the session first so the extraction hook can
+    # reference the session's ConversationSession id).
+    agent: ReasoningAgent | None = None
     # face repo shared by the track handler (identity lookup) + the agent's tools. Built
     # here (not lifespan) because the livekit-agent worker is a separate process.
     face_repo: Any = None
+    # one ConversationSession per room — lazy-created on first extraction so episodic +
+    # fact persistence have a session to hang on. None until the first turn consolidates.
+    session_id: str | None = None
     # background tasks spawned by track handlers (video loop, audio loop), for cleanup
     tasks: list = field(default_factory=list)
 
@@ -66,17 +71,33 @@ class RoomSession:
         # wire observation engine → working memory
         obs_engine = ObservationEngine(working_memory)
 
-        # extraction hook: consolidate each finished turn via the pipeline runner.
-        # Lazy import to keep the module-level dep graph light (pipeline pulls DB services).
+        # build the session shell first so the extraction hook can reference its session_id.
+        session = cls(
+            working_memory=working_memory,
+            observation_engine=obs_engine,
+            tool_ctx=tool_ctx,
+            face_repo=face_repo,
+        )
+
+        # extraction hook: consolidate each finished turn via the pipeline runner. Lazy
+        # import to keep the module-level dep graph light (pipeline pulls DB services).
+        # The ConversationSession is created lazily on the first turn (DB stays down-safe
+        # for rooms that never speak).
         async def _on_extract(text: str) -> None:
             from pipeline.runner import PipelineRunner
+            from services import MemoryService
 
             try:
-                await PipelineRunner().run(text)
+                if session.session_id is None:
+                    session.session_id = await MemoryService().start_session(
+                        summary="device session"
+                    )
+                    log.info("conversation session created: %s", session.session_id)
+                await PipelineRunner().run(text, session_id=session.session_id)
             except Exception:  # noqa: BLE001 — extraction must not kill the room
                 log.exception("pipeline run failed for turn")
 
-        agent = ReasoningAgent(
+        session.agent = ReasoningAgent(
             room=room,
             tool_ctx=tool_ctx,
             on_extract=_on_extract,
@@ -84,13 +105,7 @@ class RoomSession:
             # speech must reach CurrentContext so extraction sees the conversation).
             emit_observation=obs_engine.emit,
         )
-        return cls(
-            agent=agent,
-            working_memory=working_memory,
-            observation_engine=obs_engine,
-            tool_ctx=tool_ctx,
-            face_repo=face_repo,
-        )
+        return session
 
     async def start(self) -> None:
         """Start observation engine + reasoning agent with the latest context (if any)."""
@@ -108,3 +123,47 @@ class RoomSession:
     def sync_context(self) -> None:
         """Push the latest WorkingMemory snapshot into the ToolContext (tools see fresh data)."""
         self.tool_ctx.current_context = self.working_memory.get()
+
+
+# --- self-check: extraction hook lazily creates one ConversationSession + threads it ---
+def _self_check() -> None:  # pragma: no cover
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    async def _run() -> None:
+        room = MagicMock()
+        session = RoomSession.create(room)
+        assert session.session_id is None  # not created until first turn
+        assert session.agent is not None and session.agent.on_extract is not None
+
+        runs: list[dict] = []
+
+        async def _fake_run(text, *, session_id=None):
+            runs.append({"text": text, "session_id": session_id})
+            return {"action": "create"}
+
+        async def _start_session(*, summary=None):
+            return "session-abc"
+
+        with (
+            patch(
+                "services.MemoryService.start_session", new=AsyncMock(side_effect=_start_session)
+            ),
+            patch("pipeline.runner.PipelineRunner.run", new=AsyncMock(side_effect=_fake_run)),
+        ):
+            await session.agent.on_extract("Halo Asep")
+            await session.agent.on_extract("Beli obat lagi")
+
+        # one session created, both turns threaded with it
+        assert session.session_id == "session-abc", session.session_id
+        assert runs == [
+            {"text": "Halo Asep", "session_id": "session-abc"},
+            {"text": "Beli obat lagi", "session_id": "session-abc"},
+        ], runs
+
+    asyncio.run(_run())
+    print("session self-check OK: one ConversationSession lazily created + threaded into pipeline")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    _self_check()

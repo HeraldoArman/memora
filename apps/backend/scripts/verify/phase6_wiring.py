@@ -77,6 +77,18 @@ import vector.repository as _vec_mod
 
 _vec_mod.FaceRepository = _FakeFaceRepo
 
+# Fake the graph PersonRepo so _lookup_face resolves person_id → name (identity path end
+# to end: FAISS hit → graph name → FaceObservation(name=...) → visible_people).
+import graph.repository as _graph_mod  # noqa: E402
+
+
+class _FakePersonRepo:
+    async def get_person(self, person_id: str) -> dict | None:
+        return {"person_id": person_id, "name": "Asep"}
+
+
+_graph_mod.PersonRepo = _FakePersonRepo
+
 
 # --- fake transport: rtc + genai live session ---
 class _FakeLocalParticipant:
@@ -233,17 +245,18 @@ async def main() -> None:
     video_task = await handle_video_track(MagicMock(), room, session)
     await video_task  # let the one-frame loop run to completion
 
-    # face observation emitted → fused → working memory should have visible_people
-    # (fusion window ~1s; give the engine a tick to drain). The fused context's
-    # visible_people comes from the FaceObservation (is_known=True), but name is None
-    # (lookup sets name=None, resolved downstream), so visible_people stays [] unless a
-    # name is attached. We assert the observation was emitted + context got refreshed.
-    await asyncio.sleep(0.05)
+    # face observation emitted → fused → working memory. The fused context's
+    # visible_people comes from the FaceObservation: known (is_known=True) + named
+    # (name resolved via the graph PersonRepo) → "Asep" lands in visible_people.
+    # The engine fuses on a 1s window — sleep past it so the queued observation drains.
+    await asyncio.sleep(1.2)
+    ctx = session.working_memory.get()
+    assert ctx is not None and "Asep" in ctx.visible_people, ctx
     # feed_video pushed the jpeg to the live session
     assert any(s["video"] is not None for s in fake_live.sent_realtime), (
         "video not forwarded to Gemini"
     )
-    print("[2] video loop: face recognized → emitted → frame forwarded to Gemini")
+    print("[2] video loop: face recognized → name resolved → visible_people + frame to Gemini")
     video_task.cancel()
 
     # --- 3. simulate an audio track: SpeechForwarder reads AudioStream ---
