@@ -17,13 +17,13 @@ COPY packages/database/pyproject.toml packages/database/
 COPY packages/shared/pyproject.toml packages/shared/
 COPY packages/config/pyproject.toml packages/config/
 
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --package memora-backend
 
 # Copy source, install project + workspace members.
 COPY apps/backend apps/backend
 COPY packages packages
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv \
     uv sync --locked --package memora-backend
 
 FROM python:3.12-slim-trixie
