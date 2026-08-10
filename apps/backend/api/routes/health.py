@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from graph import client as neo4j_client
 from sqlalchemy import text
 
@@ -12,9 +13,11 @@ router = APIRouter()
 
 
 @router.get("/health")
-async def health(request: Request) -> dict:
-    """Report liveness of each backing service. 200 if the process is up;
-    individual services report their own status so a partial outage is visible."""
+async def health(request: Request) -> JSONResponse:
+    """Report liveness of each backing service. 200 if all deps up; 503 if any
+    backing service is down so load balancers + healthchecks don't route to a node
+    that can't actually serve. Individual services report their own status so a
+    partial outage is still visible in the body."""
     status: dict[str, str | int] = {"status": "ok"}
 
     # Postgres
@@ -37,4 +40,5 @@ async def health(request: Request) -> dict:
     idx = getattr(request.app.state, "face_index", None)
     status["faiss"] = f"ok:ntotal={idx.size}" if idx is not None else "unloaded"
 
-    return status
+    code = 503 if status["status"] == "degraded" else 200
+    return JSONResponse(content=status, status_code=code)

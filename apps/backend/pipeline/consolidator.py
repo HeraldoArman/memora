@@ -18,14 +18,20 @@ from __future__ import annotations
 
 import logging
 
-from constants import MemoryCategory
+from constants import MemoryCategory, RelationshipType
 from extraction.classifier import classify, for_graph
 from extraction.normalizer import normalize
 from extraction.resolver import resolve_name
-from extraction.verifier import accepted, verify
+from extraction.verifier import accepted, first_person_boost, verify
 from services import KnowledgeService, MemoryService, PersonService
 
 logger = logging.getLogger(__name__)
+
+# Valid graph edge labels. LLM relationship strings are f-string'd into Cypher
+# (queries.add_relation_cypher), so reject anything outside this set before it
+# reaches the query builder — the schema enum constrains structured output, but
+# the json.loads fallback in extractor._parse can bypass it.
+_VALID_RELATIONSHIPS = {r.value for r in RelationshipType}
 
 
 class Consolidator:
@@ -88,6 +94,12 @@ class Consolidator:
             obj = rel.get("object", "")
             if not subj or not rel_type or not obj:
                 continue
+            # Security: rel_type is interpolated into Cypher as the edge label.
+            # Drop unknown relationship types so LLM output (or the json.loads
+            # fallback path) can't inject an arbitrary label into the query.
+            if rel_type not in _VALID_RELATIONSHIPS:
+                logger.warning("rejecting unknown relationship type %r", rel_type)
+                continue
             subj_canon = resolve_name(subj)
             obj_canon = normalize(obj)
             if subj_canon not in person_ids:
@@ -135,15 +147,19 @@ class Consolidator:
             except Exception as e:  # noqa: BLE001
                 logger.warning("episodic persist failed: %s", e)
 
-        # Persist extracted fact statements (raw strings → memory_facts).
-        facts = extraction.get("facts", [])
+        # Persist extracted fact statements (raw strings → memory_facts). Confidence is
+        # per-fact: a first-person statement ("I'm Asep") gets the provenance boost, a
+        # third-person one ("Asep works at Tokopedia") does not — applying the boost to the
+        # whole turn over-credited facts the speaker wasn't asserting about themselves.
+        facts = [str(f) for f in extraction.get("facts", [])]
         fact_count = 0
         if facts:
+            fact_confidences = [first_person_boost(confidence, f) for f in facts]
             try:
                 fact_count = await self.memory_service.add_facts(
-                    facts=[str(f) for f in facts],
+                    facts=facts,
                     session_id=UUID(session_id) if session_id else None,
-                    confidence=confidence,
+                    confidences=fact_confidences,
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("fact persist failed: %s", e)
@@ -206,12 +222,13 @@ def _self_check() -> None:  # pragma: no cover
     assert out["person_ids"]["Asep"] == "pid1", out
     # sushi (Food) → Preference graph category
     assert c2.knowledge_service.upsert_entity.call_args_list[-1].kwargs["category"] == "Preference"
-    # facts persisted with session_id + confidence
+    # facts persisted with per-fact confidence (first-person boost applied per fact)
     assert out["facts"] == 2, out
     c2.memory_service.add_facts.assert_awaited_once()
     call = c2.memory_service.add_facts.await_args.kwargs
     assert call["facts"] == ["Asep likes sushi", "Asep works at Tokopedia"], call
-    assert call["confidence"] == 0.95, call
+    assert call["confidences"] == [0.95, 0.95], call  # neither fact is first-person
+    assert "confidence" not in call or call.get("confidence") is None, call
     print(
         f"consolidator self-check OK: {out['entities']} entities, "
         f"{out['relationships']} rels, {out['facts']} facts"

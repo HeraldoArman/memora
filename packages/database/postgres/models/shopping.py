@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from postgres.base import Base
@@ -13,6 +13,7 @@ from postgres.base import Base
 
 class ShoppingList(Base):
     __tablename__ = "shopping_lists"
+    __table_args__ = (UniqueConstraint("title", name="uq_shopping_lists_title"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     title: Mapped[str] = mapped_column(String(255), default="Shopping")

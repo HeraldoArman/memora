@@ -325,13 +325,18 @@ class TestMemoryTools:
 
     async def test_memory_timeline(self) -> None:
         ctx = _ctx()
+        # recent_memories returns session dicts with a summary field (the only text the
+        # episodic store carries); the person_id filter matches against summary content.
         ctx.memory_service.recent_memories = AsyncMock(
-            return_value=[{"session_id": "aaa-p1-bbb"}, {"session_id": "ccc"}]
+            return_value=[
+                {"session_id": "s1", "summary": "chat about Asep"},
+                {"session_id": "s2", "summary": "other topic"},
+            ]
         )
         all_tl = await mem.memory_timeline({}, ctx)
         assert len(all_tl["timeline"]) == 2
-        filtered = await mem.memory_timeline({"person_id": "p1"}, ctx)
-        assert len(filtered["timeline"]) == 1 and "p1" in filtered["timeline"][0]["session_id"]
+        filtered = await mem.memory_timeline({"person_id": "Asep"}, ctx)
+        assert len(filtered["timeline"]) == 1 and "Asep" in filtered["timeline"][0]["summary"]
 
 
 class _BoomRetriever:

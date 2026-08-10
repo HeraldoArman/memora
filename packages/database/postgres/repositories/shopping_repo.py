@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from postgres.models import ShoppingItem, ShoppingList
@@ -17,15 +17,18 @@ class ShoppingRepo:
     """CRUD for shopping lists + items."""
 
     async def get_or_create_default(self, db: AsyncSession) -> ShoppingList:
-        result = await db.execute(select(ShoppingList).limit(1))
-        lst = result.scalars().first()
-        if lst is not None:
-            return lst
-        lst = ShoppingList(title="Shopping")
-        db.add(lst)
+        # Atomic single-list guarantee: INSERT ... ON CONFLICT DO NOTHING, then fetch.
+        # The old select→add→commit path raced → two default lists under concurrency.
+        await db.execute(
+            insert(ShoppingList)
+            .values(title="Shopping")
+            .on_conflict_do_nothing(index_elements=["title"])
+        )
         await db.commit()
-        await db.refresh(lst)
-        return lst
+        result = await db.execute(
+            select(ShoppingList).where(ShoppingList.title == "Shopping").limit(1)
+        )
+        return result.scalars().one()
 
     async def add_item(
         self, db: AsyncSession, *, list_id: UUID, name: str, quantity: str | None = None
@@ -45,9 +48,12 @@ class ShoppingRepo:
         return list(result.scalars().all())
 
     async def find_item(self, db: AsyncSession, *, list_id: UUID, name: str) -> ShoppingItem | None:
+        # Exact case-insensitive match (func.lower), not an ilike substring scan on
+        # raw user input — ilike(name) let a caller's %/_ wildcards pattern-match rows.
         result = await db.execute(
             select(ShoppingItem).where(
-                ShoppingItem.list_id == list_id, ShoppingItem.name.ilike(name)
+                ShoppingItem.list_id == list_id,
+                func.lower(ShoppingItem.name) == name.lower(),
             )
         )
         return result.scalars().first()

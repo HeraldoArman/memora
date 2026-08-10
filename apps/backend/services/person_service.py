@@ -64,7 +64,12 @@ class PersonService:
         return await self.person_repo.related_people(person_id)
 
     async def register_face(self, embedding, person_id: str) -> int:
-        """Link a face vector to an existing person. Requires face_repo."""
+        """Link a face vector to an existing person. Requires face_repo.
+
+        Persistence is the caller's responsibility (the runtime tool path saves the index
+        after a successful enroll) — keeping it out of the service keeps this method a
+        pure FAISS mutation that's testable without a writable index path.
+        """
         if self.face_repo is None:
             raise RuntimeError("FaceRepository not configured — wire it at startup.")
         return self.face_repo.register(embedding, person_id)

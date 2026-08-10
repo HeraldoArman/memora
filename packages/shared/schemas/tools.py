@@ -119,7 +119,13 @@ REMINDER_TOOLS = [
         "Perbarui pengingat. (Update a reminder.)",
         {
             "type": "object",
-            "properties": {"reminder_id": _str_param("ID pengingat")},
+            "properties": {
+                "reminder_id": _str_param("ID pengingat"),
+                "title": _str_param("Judul pengingat"),
+                "due_at": _str_param("Waktu jatuh tempo ISO 8601"),
+                "note": _str_param("Catatan"),
+                "completed": {"type": "boolean", "description": "Tandai selesai"},
+            },
             "required": ["reminder_id"],
         },
     ),

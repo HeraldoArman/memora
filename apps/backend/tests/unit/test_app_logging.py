@@ -46,7 +46,9 @@ class TestHealthRoute:
             await asyncio.gather(pg_session.close_engine(), neo4j_client.close_driver())
         except RuntimeError:
             pass
-        out = await health(_FakeRequest())
+        resp = await health(_FakeRequest())
+        assert resp.status_code == 503  # degraded → 503, not 200
+        out = _body(resp)
         assert out["status"] == "degraded"
         assert out["postgres"].startswith("error:")
         assert out["neo4j"] == "error"
@@ -59,8 +61,15 @@ class TestHealthRoute:
             size = 5
 
         req.app.state.face_index = _Idx()
-        out = await health(req)
+        resp = await health(req)
+        out = _body(resp)
         assert out["faiss"] == "ok:ntotal=5"
+
+
+def _body(resp) -> dict:
+    import json
+
+    return json.loads(resp.body)
 
 
 class TestSetupLogging:
