@@ -35,11 +35,15 @@ class FrameSampler:
         """
         from livekit import rtc
 
-        last_emit = 0.0
+        last_emit = None
         async for ev in self.video_stream:
             frame = getattr(ev, "frame", ev)
             now = asyncio.get_event_loop().time()
-            if now - last_emit < self.interval:
+            # ponytail: None sentinel so the first frame always emits. A 0.0
+            # sentinel breaks when the monotonic clock is still near 0.0 (fresh
+            # loop on a fast/loaded CI runner): `now - 0.0 < interval` is True
+            # and the first frame gets skipped → 0 frames yielded.
+            if last_emit is not None and now - last_emit < self.interval:
                 continue
             last_emit = now
             argb = frame.convert(rtc.VideoBufferType.BGRA).data
