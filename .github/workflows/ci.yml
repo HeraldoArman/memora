@@ -69,6 +69,33 @@ jobs:
       - name: Build Python packages
         run: bunx nx run-many -t build --exclude=tag:firmware
 
+  unit-test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    env:
+      # dummy values satisfy Settings validation (no live services needed)
+      LIVEKIT_URL: wss://ci.livekit.cloud
+      LIVEKIT_API_KEY: dummy
+      LIVEKIT_API_SECRET: dummy
+      GEMINI_API_KEY: dummy
+      DATABASE_URL: postgresql://postgres:password@localhost:5432/memora
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: memora123
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Sync Python workspace
+        run: uv sync --locked
+
+      - name: Run unit tests
+        run: uv run pytest apps/backend/tests/unit/
+
   migration-test:
     name: Migration Test
     runs-on: ubuntu-latest
@@ -173,6 +200,9 @@ jobs:
       - name: Run DB integration test (Postgres + Neo4j + FAISS)
         working-directory: apps/backend
         run: uv run python scripts/verify/db_integration.py
+
+      - name: Run service integration tests (pytest)
+        run: uv run pytest apps/backend/tests/integration/
 
   docker-build:
     name: Docker Build

@@ -53,7 +53,7 @@ async def register_face(args: dict, ctx: ToolContext) -> dict:
     if emb is None:
         return {"person_id": person_id, "enrolled": False, "note": "no face detected"}
     try:
-        row = ctx.person_service.register_face(emb, person_id)
+        row = await ctx.person_service.register_face(emb, person_id)
     except RuntimeError as exc:  # face_repo not wired
         return {"person_id": person_id, "enrolled": False, "note": str(exc)}
     return {"person_id": person_id, "enrolled": True, "face_index_row": row}
