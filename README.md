@@ -2,6 +2,12 @@
 
 ESP32-S3 wearable AI memory device. Python + C++ monorepo: FastAPI backend (perception, memory, reasoning), ESP32-S3 firmware (camera, audio, LiveKit transport), shared data layers (Postgres, Neo4j, FAISS).
 
+Firmware is now a native ESP-IDF 5.4+ project under `apps/firmware`. See
+`apps/firmware/README.md` for device wiring and firmware build instructions.
+
+Standalone hardware checks live under `testing_components/` and validate the
+OV2640 camera and OLED before full firmware integration.
+
 ## Stack
 
 - **Backend** — Python 3.12+, FastAPI, uvicorn
@@ -17,7 +23,7 @@ ESP32-S3 wearable AI memory device. Python + C++ monorepo: FastAPI backend (perc
 - [uv](https://docs.astral.sh/uv/) >= 0.10
 - [bun](https://bun.sh/) >= 1.3
 - Docker (for Postgres/Neo4j via docker-compose)
-- [PlatformIO](https://platformio.org/) CLI (firmware only, optional for backend-only dev)
+- [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/) 5.4+ (firmware only, optional for backend-only dev)
 
 ## Getting Started
 
@@ -90,7 +96,7 @@ memora/
 | ---------------------- | ----------------------------------------- |
 | `bun run dev`          | Start all apps in dev mode (nx)           |
 | `bun run dev:backend`  | Start FastAPI backend (uvicorn, reload)   |
-| `bun run dev:firmware` | Build/watch firmware via PlatformIO       |
+| `bun run dev:firmware` | Build firmware via ESP-IDF                |
 | `bun run build`        | Build all Python packages (nx)            |
 | `bun run install:py`   | Sync all Python workspace members         |
 | `bun run lint`         | Ruff check                                |
@@ -123,7 +129,7 @@ bunx nx dev backend
 bunx nx migrate database
 ```
 
-Firmware (`pio` commands via nx): `nx build firmware`, `nx upload firmware`, `nx monitor firmware`.
+Firmware (`idf.py` commands via nx): `nx build firmware`, `nx upload firmware`, `nx monitor firmware`.
 
 ## CI
 

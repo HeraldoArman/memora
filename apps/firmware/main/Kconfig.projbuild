@@ -1,0 +1,27 @@
+menu "Memora firmware"
+
+config MEMORA_WIFI_SSID
+    string "Wi-Fi SSID"
+    default ""
+
+config MEMORA_WIFI_PASSWORD
+    string "Wi-Fi password"
+    default ""
+
+config MEMORA_LIVEKIT_SERVER_URL
+    string "LiveKit server URL"
+    default "wss://"
+
+config MEMORA_LIVEKIT_TOKEN
+    string "Development LiveKit token"
+    default ""
+
+config MEMORA_LIVEKIT_ROOM
+    string "LiveKit room"
+    default "memora-test"
+
+config MEMORA_LIVEKIT_IDENTITY
+    string "LiveKit participant identity"
+    default "memora-device"
+
+endmenu
