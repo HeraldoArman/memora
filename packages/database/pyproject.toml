@@ -5,6 +5,9 @@ description = "Memora data layers — Postgres, Neo4j, FAISS."
 requires-python = ">=3.12"
 dependencies = [
   "memora-shared",
+  # alembic env.py reads Settings from packages/config/env — a real import,
+  # so config must be a declared dep (uv sync won't install undeclared members).
+  "memora-config",
   "sqlalchemy==2.0.51",
   "asyncpg==0.31.0",
   "alembic==1.19.0",
@@ -17,5 +20,10 @@ dependencies = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build]
+# .env symlink → apps/backend/.env is a local dev convenience; exclude it so
+# `uv build` doesn't try to pack an out-of-tree symlink into the sdist.
+exclude = [".env", ".env.*"]
+
 [tool.hatch.build.targets.wheel]
-packages = ["postgres", "neo4j", "faiss"]
+packages = ["postgres", "graph", "vector"]

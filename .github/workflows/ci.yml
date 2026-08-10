@@ -69,6 +69,111 @@ jobs:
       - name: Build Python packages
         run: bunx nx run-many -t build --exclude=tag:firmware
 
+  migration-test:
+    name: Migration Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: memora
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # dummy values satisfy Settings validation; DB vars point at the service container
+      LIVEKIT_URL: wss://ci.livekit.cloud
+      LIVEKIT_API_KEY: dummy
+      LIVEKIT_API_SECRET: dummy
+      GEMINI_API_KEY: dummy
+      DATABASE_URL: postgresql://postgres:password@localhost:5432/memora
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: memora123
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Sync Python workspace
+        run: uv sync --locked
+
+      - name: Run migrations (alembic upgrade head)
+        working-directory: packages/database
+        run: uv run alembic upgrade head
+
+      - name: Verify schema matches head revision
+        working-directory: apps/backend
+        run: uv run python scripts/verify/migration.py
+
+  integration-test:
+    name: DB Integration Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: memora
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      neo4j:
+        image: neo4j:5
+        env:
+          NEO4J_AUTH: neo4j/memora123
+          NEO4J_PLUGINS: '["apoc"]'
+        ports:
+          - 7474:7474
+          - 7687:7687
+        options: >-
+          --health-cmd "wget -O /dev/null -q http://localhost:7474 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 20s
+    env:
+      LIVEKIT_URL: wss://ci.livekit.cloud
+      LIVEKIT_API_KEY: dummy
+      LIVEKIT_API_SECRET: dummy
+      GEMINI_API_KEY: dummy
+      DATABASE_URL: postgresql://postgres:password@localhost:5432/memora
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: memora123
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Sync Python workspace
+        run: uv sync --locked
+
+      - name: Run migrations (alembic upgrade head)
+        working-directory: packages/database
+        run: uv run alembic upgrade head
+
+      - name: Run DB integration test (Postgres + Neo4j + FAISS)
+        working-directory: apps/backend
+        run: uv run python scripts/verify/db_integration.py
+
   docker-build:
     name: Docker Build
     runs-on: ubuntu-latest

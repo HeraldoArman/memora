@@ -21,7 +21,8 @@
     "migrate": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "uv run alembic upgrade head"
+        "command": "uv run alembic upgrade head",
+        "cwd": "packages/database"
       }
     }
   }

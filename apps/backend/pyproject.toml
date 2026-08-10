@@ -17,8 +17,14 @@ dependencies = [
   "neo4j==6.2.0",
   "faiss-cpu==1.15.0",
   "livekit==1.1.14",
+  "livekit-agents==1.6.9",
+  "google-genai==2.17.0",
   "insightface==1.0.1",
   "openai-whisper==20250625",
+  # Declared direct so [tool.uv.sources] can pin it to the CPU index.
+  # Transitive (via openai-whisper + insightface) — without this the source
+  # pin doesn't apply and ~20 nvidia CUDA wheels (~2GB) get pulled in.
+  "torch==2.13.0",
   "httpx==0.28.1",
 ]
 
@@ -28,3 +34,15 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src", "api", "gateway", "perception", "context", "extraction", "pipeline", "memory", "reasoning", "tools", "services", "workers", "config"]
+
+# CPU-only torch: openai-whisper + insightface pull torch, which by default
+# drags ~20 nvidia CUDA wheels (~2GB). Pin torch to the PyTorch CPU index so
+# only torch resolves there (explicit = true keeps every other package on PyPI).
+# Backend runs on CPU servers — CUDA not needed.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
