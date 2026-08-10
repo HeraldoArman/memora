@@ -2,6 +2,10 @@
   "name": "memora",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "nx run-many -t dev",
     "build": "nx run-many -t build",
