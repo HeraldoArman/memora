@@ -1,0 +1,42 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "sharedGlobals"],
+    "production": [
+      "default",
+      "!{workspaceRoot}/apps/backend/dist/**",
+      "!{workspaceRoot}/packages/*/dist/**",
+      "!{projectRoot}/**/?(*.)+(spec|test).[jt]s?(x)?(.snap)",
+      "!{projectRoot}/tsconfig.spec.json",
+      "!{projectRoot}/.venv/**",
+      "!{projectRoot}/**/__pycache__/**"
+    ],
+    "sharedGlobals": []
+  },
+  "targetDefaults": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["production", "^production"]
+    },
+    "install": {
+      "dependsOn": ["^install"],
+      "cache": false
+    },
+    "dev": {
+      "cache": false
+    },
+    "migrate": {
+      "cache": false
+    },
+    "db:start": {
+      "cache": false
+    },
+    "db:stop": {
+      "cache": false
+    },
+    "db:down": {
+      "cache": false
+    }
+  },
+  "plugins": ["@nxlv/python"]
+}

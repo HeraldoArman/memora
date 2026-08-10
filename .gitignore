@@ -1,0 +1,92 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Build outputs
+dist
+build
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env*.local
+
+# IDEs and editors
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs
+.evlog/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Turbo / Nx
+.turbo
+.nx
+
+# Better-T-Stack
+.alchemy
+.vercel
+
+# Testing
+coverage
+.nyc_output
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+.eggs/
+develop-eggs/
+sdist/
+wheels/
+.python-version
+.uv/
+uv.lock
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.tox/
+
+# PlatformIO / firmware
+.pio/
+.pioenvs/
+.piolibdeps/
+apps/firmware/.pio/
+apps/firmware/.pioenvs/
+apps/firmware/.piolibdeps/
+
+# ML model weights (large, gitignored)
+models/insightface/*
+models/whisper/*
+!models/insightface/.gitkeep
+!models/whisper/.gitkeep
+!models/README.md
+
+# Misc
+*.tgz
+.cache
+tmp
+temp

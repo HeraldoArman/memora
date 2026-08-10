@@ -1,0 +1,30 @@
+[project]
+name = "memora-backend"
+version = "0.1.0"
+description = "Memora backend — FastAPI gateway, perception, memory, reasoning."
+requires-python = ">=3.12"
+dependencies = [
+  "memora-database",
+  "memora-shared",
+  "memora-config",
+  "fastapi==0.141.1",
+  "uvicorn[standard]==0.52.1",
+  "pydantic==2.13.4",
+  "pydantic-settings==2.14.2",
+  "sqlalchemy==2.0.51",
+  "asyncpg==0.31.0",
+  "alembic==1.19.0",
+  "neo4j==6.2.0",
+  "faiss-cpu==1.15.0",
+  "livekit==1.1.14",
+  "insightface==1.0.1",
+  "openai-whisper==20250625",
+  "httpx==0.28.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src", "api", "gateway", "perception", "context", "extraction", "pipeline", "memory", "reasoning", "tools", "services", "workers", "config"]

@@ -1,0 +1,21 @@
+[project]
+name = "memora-database"
+version = "0.1.0"
+description = "Memora data layers — Postgres, Neo4j, FAISS."
+requires-python = ">=3.12"
+dependencies = [
+  "memora-shared",
+  "sqlalchemy==2.0.51",
+  "asyncpg==0.31.0",
+  "alembic==1.19.0",
+  "neo4j==6.2.0",
+  "faiss-cpu==1.15.0",
+  "pydantic==2.13.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["postgres", "neo4j", "faiss"]

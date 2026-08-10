@@ -1,0 +1,39 @@
+[project]
+name = "memora"
+version = "0.1.0"
+description = "Memora — ESP32-S3 wearable AI memory device. Monorepo root."
+requires-python = ">=3.12"
+dependencies = ["ruff==0.16.1"]
+
+[tool.uv.workspace]
+members = ["apps/backend", "packages/database", "packages/shared", "packages/config"]
+
+[tool.uv.sources]
+memora-backend = { workspace = true }
+memora-database = { workspace = true }
+memora-shared = { workspace = true }
+memora-config = { workspace = true }
+
+[dependency-groups]
+dev = ["ruff==0.16.1"]
+
+# Minimal, safety-first. Catch runtime errors, not style nits.
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["node_modules", ".venv", "apps/firmware", "models", "*.mmd"]
+
+[tool.ruff.lint]
+# F = pyflakes (undefined names, unused imports — real runtime bugs)
+# E4/E7/E9 = pycodestyle errors that break or risk runtime (syntax, bare except, etc)
+# I = isort (import order, cheap, avoids merge conflicts)
+# UP = pyupgrade (flags deprecated syntax)
+select = ["F", "E4", "E7", "E9", "I", "UP"]
+# Ignore style noise — not runtime risks. Kept loose per request.
+ignore = ["E402"]  # module-level import not at top (FastAPI apps sometimes import after config)
+
+[tool.ruff.lint.isort]
+known-first-party = ["api", "gateway", "perception", "context", "extraction", "pipeline", "memory", "reasoning", "tools", "services", "workers", "config", "postgres", "neo4j", "faiss", "constants", "dto", "schemas", "prompts", "utils"]
+
+[tool.ruff.format]
+docstring-code-format = true

@@ -1,0 +1,16 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "packages/shared",
+  "targets": {
+    "install": {
+      "executor": "@nxlv/python:install",
+      "options": { "silent": false, "args": ["--sync"] }
+    },
+    "build": {
+      "executor": "@nxlv/python:build",
+      "outputs": ["{workspaceRoot}/packages/shared/dist"],
+      "options": { "outputPath": "{workspaceRoot}/packages/shared/dist", "publish": false }
+    }
+  }
+}

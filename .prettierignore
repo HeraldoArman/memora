@@ -1,0 +1,15 @@
+node_modules
+.venv
+.nx
+.turbo
+dist
+build
+uv.lock
+bun.lock
+*.mmd
+*.toml
+apps/firmware
+models
+packages/*/dist
+apps/*/dist
+.github/workflows
