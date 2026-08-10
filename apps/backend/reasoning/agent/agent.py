@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from context.engine import ContextEngine
@@ -52,6 +52,7 @@ class ReasoningAgent:
         speaker: Speaker | None = None,
         display: Display | None = None,
         on_extract: Callable[[str], Any] | None = None,
+        emit_observation: Callable[[object], Awaitable[None]] | None = None,
     ) -> None:
         self.room = room
         self.ctx = tool_ctx
@@ -61,6 +62,9 @@ class ReasoningAgent:
         self.display = display or Display(room)
         # on_extract(turn_text) — pipeline consolidation hook, set by gateway.
         self.on_extract = on_extract
+        # emit_observation(obs) — observation feed (ObservationEngine.emit). Final speech
+        # transcripts become SpeechObservations so extraction sees the conversation.
+        self.emit_observation = emit_observation
         self._connected = False
 
     async def start(self, current: CurrentContext | None = None) -> None:
@@ -111,11 +115,22 @@ class ReasoningAgent:
     async def _on_transcription(self, text: str, is_final: bool) -> None:
         """Input speech transcription → observation feed (decision #3: continuous, not turn).
 
-        The gateway/working memory owns writing this into the CurrentContext; here we
-        just log at debug. Ponytail: no separate transcription store — it folds into the
-        rolling speech transcript the perception layer maintains.
+        Final transcripts are emitted as SpeechObservations into Working Memory via the
+        emit_observation hook (set by the gateway to ObservationEngine.emit). Fuse only
+        folds is_final=True into CurrentContext.speech, so interim is skipped to avoid
+        noise. Extraction reads ctx.speech at turn boundaries — final-only is sufficient.
         """
         log.debug("transcription: %r (final=%s)", text, is_final)
+        if not is_final or not text.strip():
+            return
+        if self.emit_observation is None:
+            return
+        from dto.observations import SpeechObservation
+
+        try:
+            await self.emit_observation(SpeechObservation(transcript=text, confidence=0.9))
+        except Exception:  # noqa: BLE001 — observation failure must not kill the receive loop
+            log.exception("emit speech observation failed")
 
     async def feed_video(self, jpeg: bytes) -> None:
         """Perception sampler pushes a frame here (≤1 FPS)."""
@@ -162,6 +177,8 @@ def _self_check() -> None:  # pragma: no cover
     speaker.aclose = AsyncMock()
     display = MagicMock()
     display.show = AsyncMock()
+    emitted: list = []
+    emit_observation = AsyncMock(side_effect=lambda obs: emitted.append(obs))
 
     agent = ReasoningAgent(
         room=room,
@@ -170,6 +187,7 @@ def _self_check() -> None:  # pragma: no cover
         session=session,
         speaker=speaker,
         display=display,
+        emit_observation=emit_observation,
     )
 
     asyncio.run(agent.start(current=None))
@@ -185,9 +203,17 @@ def _self_check() -> None:  # pragma: no cover
     session.start_receive.assert_called_once()
     assert agent._connected
 
+    # final transcription → SpeechObservation emitted; interim + empty skipped
+    asyncio.run(agent._on_transcription("apa ini?", is_final=True))
+    asyncio.run(agent._on_transcription("apa ini?", is_final=False))
+    asyncio.run(agent._on_transcription("   ", is_final=True))
+    assert len(emitted) == 1, emitted
+    assert emitted[0].transcript == "apa ini?" and emitted[0].is_final
+    assert type(emitted[0]).__name__ == "SpeechObservation"
+
     asyncio.run(agent.stop())
     assert not agent._connected
-    print("agent self-check OK: context→connect→speaker→receive wiring verified")
+    print("agent self-check OK: context→connect→speaker→receive→speech-obs wiring verified")
 
 
 if __name__ == "__main__":  # pragma: no cover

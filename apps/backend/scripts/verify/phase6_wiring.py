@@ -60,11 +60,17 @@ _FaceLookup = type(
 
 
 class _FakeFaceRepo:
+    size = 1  # RoomSession.create logs face_repo.size
+
     def lookup(self, embedding):
         return _FaceLookup()
 
     def register(self, embedding):
         return "p1"
+
+    @classmethod
+    def load(cls, path, *, known_threshold=0.8, possible_threshold=0.6):
+        return cls()
 
 
 import vector.repository as _vec_mod

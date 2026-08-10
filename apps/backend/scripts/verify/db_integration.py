@@ -41,6 +41,7 @@ from postgres.models import (  # noqa: E402
     ConversationMessage,
     ConversationSession,
     Event,
+    MemoryFact,
     Reminder,
     ShoppingItem,
     ShoppingList,
@@ -50,6 +51,7 @@ from postgres.models import (  # noqa: E402
 from postgres.repositories import (  # noqa: E402
     ConversationRepo,
     EventRepo,
+    FactRepo,
     ReminderRepo,
     ShoppingRepo,
     SystemRepo,
@@ -199,6 +201,22 @@ async def _postgres() -> None:
         val2 = await sy.get_setting(db, "test_key")
         assert val2 == "xyz"
         _ok("system.set_setting (update)")
+
+    # --- FactRepo (extracted memory facts) ---
+    fr = FactRepo()
+    async with sm() as db:
+        n = await fr.add_many(
+            db,
+            facts=["Asep likes sushi", "Asep works at Tokopedia"],
+            session_id=s.id,
+            confidence=0.95,
+        )
+        assert n == 2
+        _ok("fact.add_many")
+        facts = await fr.list_recent(db, limit=10)
+        assert any(f.fact == "Asep likes sushi" and f.session_id == s.id for f in facts)
+        assert all(isinstance(f, MemoryFact) for f in facts)
+        _ok("fact.list_recent")
 
 
 async def _neo4j() -> None:

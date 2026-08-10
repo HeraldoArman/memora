@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from perception.observation.engine import ObservationEngine
 from perception.observation.working_memory import WorkingMemory
@@ -32,6 +33,9 @@ class RoomSession:
     working_memory: WorkingMemory
     observation_engine: ObservationEngine
     tool_ctx: ToolContext
+    # face repo shared by the track handler (identity lookup) + the agent's tools. Built
+    # here (not lifespan) because the livekit-agent worker is a separate process.
+    face_repo: Any = None
     # background tasks spawned by track handlers (video loop, audio loop), for cleanup
     tasks: list = field(default_factory=list)
 
@@ -43,8 +47,22 @@ class RoomSession:
         gateway: whenever the observation engine writes a new CurrentContext, the gateway
         pushes it to both WorkingMemory (via the engine) and the tool_ctx (so tools see it).
         """
+        from env import get_settings
+        from vector.repository import FaceRepository
+
+        settings = get_settings()
         working_memory = WorkingMemory()
         tool_ctx = ToolContext()
+        # face repo for THIS process (FastAPI lifespan only wires the API process; the
+        # livekit-agent worker never runs it). Loads index + sidecar, or starts empty.
+        face_repo = FaceRepository.load(
+            settings.faiss_index_path,
+            known_threshold=settings.face_match_threshold,
+            possible_threshold=settings.face_possible_match_threshold,
+        )
+        tool_ctx.face_repo = face_repo  # wires PersonService so search_by_face/register_face work
+        log.info("room session face repo ready: %d embedding(s)", face_repo.size)
+
         # wire observation engine → working memory
         obs_engine = ObservationEngine(working_memory)
 
@@ -62,12 +80,16 @@ class RoomSession:
             room=room,
             tool_ctx=tool_ctx,
             on_extract=_on_extract,
+            # transcription → SpeechObservation → ObservationEngine (perception.md §10:
+            # speech must reach CurrentContext so extraction sees the conversation).
+            emit_observation=obs_engine.emit,
         )
         return cls(
             agent=agent,
             working_memory=working_memory,
             observation_engine=obs_engine,
             tool_ctx=tool_ctx,
+            face_repo=face_repo,
         )
 
     async def start(self) -> None:

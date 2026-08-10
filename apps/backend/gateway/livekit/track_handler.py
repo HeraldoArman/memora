@@ -76,7 +76,7 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
                 try:
                     faces = recognizer.detect_and_embed(frame["bgr"])
                     for f in faces:
-                        obs = await _lookup_face(f.embedding)
+                        obs = await _lookup_face(f.embedding, session.face_repo)
                         if obs is not None:
                             await session.observation_engine.emit(obs)
                 except Exception:  # noqa: BLE001 — perception errors must not kill the loop
@@ -99,19 +99,26 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
     return task
 
 
-async def _lookup_face(embedding) -> FaceObservation | None:
-    """Identify an embedding via the face repository; emit a FaceObservation.
+async def _lookup_face(embedding, face_repo) -> FaceObservation | None:
+    """Identify an embedding via the session's face repo; return a FaceObservation.
 
-    Ponytail: lazy import — the face repo pulls FAISS + settings. Returns None if the
-    repo isn't available (keeps the video loop alive if face infra fails). FaceRepository
-    is sync (faiss-cpu search is in-process); we keep the function async so callers can
-    `await` uniformly, but the lookup itself is not awaited.
+    `face_repo` is the RoomSession's FaceRepository (built at session create — the worker
+    process doesn't run the FastAPI lifespan). None repo → no identity path (keeps the
+    video loop alive if face infra isn't wired). FaceRepository is sync (faiss-cpu search
+    is in-process); we keep the function async so callers can `await` uniformly.
     """
     try:
-        from vector.repository import FaceRepository
-
-        repo = FaceRepository()
-        result = repo.lookup(embedding)  # sync: faiss search is in-process
+        if face_repo is None:
+            log.debug("face repo not available; skipping identity lookup")
+            return None
+        result = face_repo.lookup(embedding)  # sync: faiss search is in-process
+        log.info(
+            "face lookup: %s score=%.3f known=%s possible=%s",
+            result.person_id or "unknown",
+            result.score,
+            result.is_known,
+            result.is_possible,
+        )
         return FaceObservation(
             person_id=result.person_id,
             name=None,  # name resolved downstream by PersonService if known

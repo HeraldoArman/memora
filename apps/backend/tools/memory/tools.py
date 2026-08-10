@@ -21,8 +21,27 @@ async def recent_memories(args: dict, ctx: ToolContext) -> dict:
 
 
 async def similar_memories(args: dict, ctx: ToolContext) -> dict:
-    """Ponytail: same as search_memory (no embedding-based similarity yet)."""
-    return await search_memory(args, ctx)
+    """Memories similar to a query: retrieve graph + episodic candidates, rank by overlap.
+
+    Uses the same Retriever + ranker as the ContextEngine (token-overlap similarity —
+    no embedding model call per query; deterministic at this scale).
+    """
+    query = args.get("query", "")
+    if not query:
+        return {"error": "query required"}
+    from memory.ranking.ranker import rank
+    from memory.retrieval.retriever import Retriever
+
+    try:
+        candidates = await Retriever().retrieve(query, visible_people=None)
+        ranked = rank(candidates, query=query)
+    except Exception as e:  # noqa: BLE001 — retrieval must not hard-fail a tool call
+        return {"results": [], "note": f"retrieval failed: {e}"}
+    return {
+        "results": [
+            {"content": c[0].get("content", ""), "score": round(c[1], 3)} for c in ranked[:10]
+        ]
+    }
 
 
 async def memory_timeline(args: dict, ctx: ToolContext) -> dict:

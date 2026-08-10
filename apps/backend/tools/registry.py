@@ -44,6 +44,14 @@ class ToolContext:
     # Live observation state (set by the gateway from Working Memory)
     current_context: Any = None  # CurrentContext | None
 
+    # FAISS FaceRepository — wired at RoomSession.create (worker process). When set, the
+    # person_service is rebuilt with it so search_by_face / register_face resolve identity.
+    face_repo: Any = None  # FaceRepository | None
+
+    def __post_init__(self) -> None:
+        if self.face_repo is not None:
+            self.person_service = PersonService(face_repo=self.face_repo)
+
     def current_face_embedding(self):
         """Return the latest face embedding from the current context, or None.
 
@@ -87,6 +95,7 @@ def build_registry() -> dict[str, ToolFunc]:
     if _REGISTRY is not None:
         return _REGISTRY
     from tools.calendar.tools import CALENDAR_TOOL_FUNCS
+    from tools.knowledge.tools import KNOWLEDGE_TOOL_FUNCS
     from tools.memory.tools import MEMORY_TOOL_FUNCS
     from tools.observation.tools import OBSERVATION_TOOL_FUNCS
     from tools.person.tools import PERSON_TOOL_FUNCS
@@ -97,6 +106,7 @@ def build_registry() -> dict[str, ToolFunc]:
         **PERSON_TOOL_FUNCS,
         **MEMORY_TOOL_FUNCS,
         **REMINDER_TOOL_FUNCS,
+        **KNOWLEDGE_TOOL_FUNCS,
         **CALENDAR_TOOL_FUNCS,
         **OBSERVATION_TOOL_FUNCS,
         **SYSTEM_TOOL_FUNCS,
@@ -115,20 +125,8 @@ def _self_check() -> None:  # pragma: no cover
     implemented = set(reg)
     missing = declared - implemented
     extra = implemented - declared
-    # knowledge tools (search_entity/entity_relationships/etc.) are declared but may route
-    # through memory/knowledge services via the memory tools; allow them unimplemented.
-    optional = {
-        "search_entity",
-        "entity_relationships",
-        "search_preferences",
-        "related_people",
-        "knowledge_graph",
-        "similar_memories",
-        "memory_timeline",
-        "firmware_version",
-    }
-    missing_required = missing - optional
-    assert not missing_required, f"declared but not implemented: {sorted(missing_required)}"
+    # Every declared tool is implemented (knowledge + face-enroll tools included).
+    assert not missing, f"declared but not implemented: {sorted(missing)}"
     assert not extra, f"implemented but not declared: {sorted(extra)}"
     assert TOOLS_BLOCK["function_declarations"] is ALL_FUNCTION_DECLARATIONS
     print(f"registry self-check OK: {len(reg)} tools, {len(declared)} declared")

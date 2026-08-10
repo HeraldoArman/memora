@@ -162,9 +162,10 @@ class GeminiLiveSession:
 
     async def _handle_content(self, sc: types.LiveServerContent) -> None:
         # transcription = continuous feed (decision #3); emit even mid-turn.
+        # input_transcription = final transcript (is_final=True); interim = partial.
         if self._on_transcription is not None:
             if sc.input_transcription:
-                await self._on_transcription(sc.input_transcription.text, False)
+                await self._on_transcription(sc.input_transcription.text, True)
             if sc.interim_input_transcription:
                 await self._on_transcription(sc.interim_input_transcription.text, False)
         # model turn parts: text → display, audio → speaker.
@@ -265,9 +266,13 @@ def _self_check() -> None:  # pragma: no cover
 
     # route a fake server message with text + tool_call through _handle using a stub session
     received_text: list[str] = []
+    received_transcripts: list[tuple[str, bool]] = []
 
     async def fake_on_text(t: str) -> None:
         received_text.append(t)
+
+    async def fake_on_transcription(t: str, is_final: bool) -> None:
+        received_transcripts.append((t, is_final))
 
     # stub session capturing send_tool_response
     class _StubSession:
@@ -280,6 +285,7 @@ def _self_check() -> None:  # pragma: no cover
     s._session = _StubSession()  # type: ignore[assignment]
     s._ctx = ToolContext()
     s._on_text = fake_on_text
+    s._on_transcription = fake_on_transcription
 
     # patch registry so firmware_version resolves
     import tools.registry as reg
@@ -304,6 +310,15 @@ def _self_check() -> None:  # pragma: no cover
     assert len(s._session.sent) == 1  # type: ignore[attr-defined]
     assert s._session.sent[0]["name"] == "firmware_version"  # type: ignore[attr-defined]
     print("live_session self-check OK: text→on_text, tool_call→send_tool_response")
+
+    # --- transcription is_final routing: input=final, interim=partial ---
+    sc = types.LiveServerContent(
+        input_transcription=types.Transcription(text="apa ini?"),
+        interim_input_transcription=types.Transcription(text="apa in"),
+    )
+    asyncio.run(s._handle_content(sc))
+    assert received_transcripts == [("apa ini?", True), ("apa in", False)], received_transcripts
+    print("live_session self-check OK: input_transcription→final, interim→partial")
 
     # --- Phase 7: reconnect loop ---
     async def _check_reconnect() -> None:

@@ -124,10 +124,10 @@ class Consolidator:
                     "add_relation failed (%s -[%s]-> %s): %s", subj_canon, rel_type, obj_canon, e
                 )
 
+        from uuid import UUID
+
         # Persist the episode as a conversation message (episodic record).
         if session_id and content:
-            from uuid import UUID
-
             try:
                 await self.memory_service.add_message(
                     session_id=UUID(session_id), role="user", content=content
@@ -135,11 +135,25 @@ class Consolidator:
             except Exception as e:  # noqa: BLE001
                 logger.warning("episodic persist failed: %s", e)
 
+        # Persist extracted fact statements (raw strings → memory_facts).
+        facts = extraction.get("facts", [])
+        fact_count = 0
+        if facts:
+            try:
+                fact_count = await self.memory_service.add_facts(
+                    facts=[str(f) for f in facts],
+                    session_id=UUID(session_id) if session_id else None,
+                    confidence=confidence,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("fact persist failed: %s", e)
+
         return {
             "action": "create",
             "level": level.value,
             "entities": entity_count,
             "relationships": rel_count,
+            "facts": fact_count,
             "person_ids": person_ids,
         }
 
@@ -180,7 +194,9 @@ def _self_check() -> None:  # pragma: no cover
             {"subject": "Asep", "relationship": "WORKS_AT", "object": "Tokopedia"},
             {"subject": "Asep", "relationship": "LIKES", "object": "sushi"},
         ],
+        "facts": ["Asep likes sushi", "Asep works at Tokopedia"],
     }
+    c2.memory_service.add_facts = AsyncMock(return_value=2)
     out = asyncio.run(
         c2.consolidate(extraction, content="I'm Asep, I work at Tokopedia, I like sushi")
     )
@@ -190,7 +206,16 @@ def _self_check() -> None:  # pragma: no cover
     assert out["person_ids"]["Asep"] == "pid1", out
     # sushi (Food) → Preference graph category
     assert c2.knowledge_service.upsert_entity.call_args_list[-1].kwargs["category"] == "Preference"
-    print(f"consolidator self-check OK: {out['entities']} entities, {out['relationships']} rels")
+    # facts persisted with session_id + confidence
+    assert out["facts"] == 2, out
+    c2.memory_service.add_facts.assert_awaited_once()
+    call = c2.memory_service.add_facts.await_args.kwargs
+    assert call["facts"] == ["Asep likes sushi", "Asep works at Tokopedia"], call
+    assert call["confidence"] == 0.95, call
+    print(
+        f"consolidator self-check OK: {out['entities']} entities, "
+        f"{out['relationships']} rels, {out['facts']} facts"
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

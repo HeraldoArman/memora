@@ -29,7 +29,7 @@ from env import get_settings  # noqa: E402
 from postgres import session as pg_session  # noqa: E402
 
 # Head revision from packages/database/postgres/migrations/versions/.
-HEAD_REVISION = "89310c8b2c74"
+HEAD_REVISION = "c4d5e6f7a8b9"
 
 EXPECTED_TABLES = {
     "conversation_sessions",
@@ -41,6 +41,7 @@ EXPECTED_TABLES = {
     "shopping_items",
     "settings",
     "system_logs",
+    "memory_facts",
     "alembic_version",
 }
 

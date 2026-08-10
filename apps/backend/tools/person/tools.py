@@ -40,6 +40,25 @@ async def register_person(args: dict, ctx: ToolContext) -> dict:
     return {"person": node}
 
 
+async def register_face(args: dict, ctx: ToolContext) -> dict:
+    """Link the currently visible face to an existing person (enroll identity).
+
+    Uses the latest face embedding from Working Memory (the recognizer already ran). The
+    person must already exist (register_person first). FaceRepository.register is sync.
+    """
+    person_id = args.get("person_id")
+    if not person_id:
+        return {"error": "person_id required"}
+    emb = ctx.current_face_embedding()
+    if emb is None:
+        return {"person_id": person_id, "enrolled": False, "note": "no face detected"}
+    try:
+        row = ctx.person_service.register_face(emb, person_id)
+    except RuntimeError as exc:  # face_repo not wired
+        return {"person_id": person_id, "enrolled": False, "note": str(exc)}
+    return {"person_id": person_id, "enrolled": True, "face_index_row": row}
+
+
 async def update_person(args: dict, ctx: ToolContext) -> dict:
     """Update a person's notes."""
     person_id = args.get("person_id")
@@ -57,5 +76,6 @@ PERSON_TOOL_FUNCS = {
     "search_person": search_person,
     "search_person_by_face": search_person_by_face,
     "register_person": register_person,
+    "register_face": register_face,
     "update_person": update_person,
 }
