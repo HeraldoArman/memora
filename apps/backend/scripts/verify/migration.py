@@ -60,6 +60,7 @@ EXPECTED_TABLES = {
     "settings",
     "system_logs",
     "memory_facts",
+    "face_embeddings",
     "alembic_version",
 }
 
