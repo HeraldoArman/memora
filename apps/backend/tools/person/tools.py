@@ -96,8 +96,10 @@ async def register_face(args: dict, ctx: ToolContext) -> dict:
         from postgres.repositories import FaceEmbeddingRepo
         from postgres.session import get_sessionmaker
 
+        log.info("persisting face embedding for %s (emb shape=%s)", person_id, emb.shape)
         async with get_sessionmaker()() as db:
             await FaceEmbeddingRepo().save(db, person_id=person_id, embedding=emb)
+        log.info("face embedding persisted to DB for %s", person_id)
     except Exception:  # noqa: BLE001 — DB unavailable shouldn't block enrollment
         log.exception("face embedding persist to DB failed for %s", person_id)
         return {"person_id": person_id, "enrolled": True, "face_index_row": row, "persisted": False}

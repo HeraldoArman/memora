@@ -75,11 +75,18 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
 
     async def _video_loop() -> None:
         nonlocal _scene_counter
+        log.info("video loop started")
         try:
             async for frame in sampler.frames():
                 # 1. face identity path (deterministic; Gemini can't match a gallery)
                 try:
                     faces = recognizer.detect_and_embed(frame["bgr"])
+                    log.info(
+                        "frame: %dx%d faces=%d",
+                        frame["bgr"].shape[1],
+                        frame["bgr"].shape[0],
+                        len(faces),
+                    )
                     if faces:
                         f = faces[0]
                         obs = await _lookup_face(f.embedding, session.face_repo)
