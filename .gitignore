@@ -77,6 +77,7 @@ wheels/
 apps/firmware/.pio/
 apps/firmware/.pioenvs/
 apps/firmware/.piolibdeps/
+apps/firmware/managed_components/
 
 # ML model weights (large, gitignored)
 models/insightface/**
