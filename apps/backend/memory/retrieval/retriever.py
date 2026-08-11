@@ -1,4 +1,4 @@
-"""Retriever — query Neo4j (semantic) + Postgres (episodic) + FAISS (face) for context.
+"""Retriever — query Neo4j (semantic) + Postgres (episodic) + FAISS (face + text) for context.
 
 context.md §8 (retrieval). Wraps the service layer (which already wraps the repos) —
 no separate graph_store/episodic_store wrapper classes; services are the store seam.
@@ -7,8 +7,9 @@ Returns a flat list of candidate dicts with a normalized shape the ranker consum
   {content, category, created_at, confidence, related_people, location, source, source_id}
 
 Ponytail: for the hackathon, retrieval = name-substring graph search + recent episodic
-sessions + (optional) face lookup. No vector embedding of the query yet — that would need a
-text-embedding model call per query. Token-overlap ranking covers the "Asep?" case well.
+sessions + (optional) face lookup + (optional) text embedding search. When a text
+embedder + text index are wired, semantic search via FAISS replaces pure name-substring.
+Falls back to name-substring if the embedder/index are unavailable (graceful degradation).
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class Retriever:
-    """Fetch memory candidates from the graph + episodic store."""
+    """Fetch memory candidates from the graph + episodic store + text index."""
 
     def __init__(
         self,
@@ -29,10 +30,14 @@ class Retriever:
         person_service: PersonService | None = None,
         knowledge_service: KnowledgeService | None = None,
         memory_service: MemoryService | None = None,
+        text_embedder=None,
+        text_index=None,
     ) -> None:
         self.person_service = person_service or PersonService()
         self.knowledge_service = knowledge_service or KnowledgeService()
         self.memory_service = memory_service or MemoryService()
+        self.text_embedder = text_embedder
+        self.text_index = text_index
 
     async def retrieve(
         self,
@@ -64,6 +69,24 @@ class Retriever:
                     "source_id": r.get("session_id"),
                 }
             )
+        # 3. Text embedding search (if embedder + index are wired)
+        if self.text_embedder is not None and self.text_index is not None and query:
+            try:
+                emb = await self.text_embedder.embed(query)
+                if emb is not None and self.text_index.size > 0:
+                    hits = self.text_index.search(emb, k=limit)
+                    for memory_id, score in hits:
+                        candidates.append(
+                            {
+                                "content": memory_id,  # memory_id is the fact text itself
+                                "category": "Fact",
+                                "source": "faiss_text",
+                                "source_id": memory_id,
+                                "confidence": score,
+                            }
+                        )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("text embedding search failed, falling back: %s", e)
         return _dedup(candidates)
 
 

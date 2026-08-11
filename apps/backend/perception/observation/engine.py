@@ -110,11 +110,19 @@ def fuse(batch: list[Observation]) -> CurrentContext:
             if obs.is_known and obs.name and obs.name not in seen:
                 seen.add(obs.name)
                 visible.append(obs.name)
+            elif obs.is_possible_match and obs.name:
+                # FAISS score 0.60–0.80: probably this person but not confident.
+                # Surface as "Mungkin <name>" so the agent can ask "Is this <name>?"
+                # and on confirmation, register_face adds the embedding under the
+                # existing person_id — improving future matches.
+                maybe = f"Mungkin {obs.name}"
+                if maybe not in seen:
+                    seen.add(maybe)
+                    visible.append(maybe)
             elif not obs.is_known and not unknown_surfaced:
-                # ponytail: surface unknown faces so the agent can ask "siapa ini?"
-                # and drive the register_person/register_face flow. The full PRD
-                # temporary-ID flow (face_recognition.md §11) is Phase 7; this is
-                # the minimal wire that makes the existing registration tools reachable.
+                # Fully unknown (score < 0.60) OR possible match with no name resolved
+                # (graph down). Surface as "Orang tidak dikenali" so the agent can ask
+                # "siapa ini?" and drive the register_person/register_face flow.
                 seen.add("Orang tidak dikenali")
                 visible.append("Orang tidak dikenali")
                 unknown_surfaced = True
@@ -161,6 +169,9 @@ def _self_check() -> None:  # pragma: no cover
     batch = [
         FaceObservation(person_id="p1", name="Asep", confidence=0.95, is_known=True),
         FaceObservation(person_id="p2", name="Asep", confidence=0.9, is_known=True),  # dup name
+        FaceObservation(
+            person_id="p3", name="Budi", confidence=0.7, is_possible_match=True
+        ),  # possible match → "Mungkin Budi"
         FaceObservation(person_id=None, name=None, confidence=0.4, is_known=False),  # unknown
         FaceObservation(
             person_id=None, name=None, confidence=0.3, is_known=False
@@ -170,8 +181,10 @@ def _self_check() -> None:  # pragma: no cover
         DeviceObservation(battery_level=72, wifi_connected=True, confidence=1.0),
     ]
     ctx = fuse(batch)
-    # known "Asep" + one "Orang tidak dikenali" (2nd unknown deduped)
-    assert ctx.visible_people == ["Asep", "Orang tidak dikenali"], ctx.visible_people
+    # known "Asep" + possible "Mungkin Budi" + one "Orang tidak dikenali" (2nd unknown deduped)
+    assert ctx.visible_people == ["Asep", "Mungkin Budi", "Orang tidak dikenali"], (
+        ctx.visible_people
+    )
     assert ctx.scene == "apotek"
     assert ctx.activity == "beli obat"
     assert ctx.speech == "apa ini?"

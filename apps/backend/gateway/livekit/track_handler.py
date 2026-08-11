@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from dto.observations import FaceObservation
+from dto.observations import FaceObservation, SceneObservation
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +68,10 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
     video_stream = rtc.VideoStream(track)
     sampler = FrameSampler(video_stream)
     recognizer = FaceRecognizer()
+    from perception.face.tracker import FaceTracker
+
+    tracker = FaceTracker()
+    seen_tracks: set[int] = set()
 
     async def _video_loop() -> None:
         try:
@@ -75,12 +79,31 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
                 # 1. face identity path (deterministic; Gemini can't match a gallery)
                 try:
                     faces = recognizer.detect_and_embed(frame["bgr"])
-                    for f in faces:
-                        obs = await _lookup_face(f.embedding, session.face_repo)
-                        if obs is not None:
-                            await session.observation_engine.emit(obs)
+                    for tid, f in _track_faces(tracker, faces):
+                        if tid not in seen_tracks:
+                            seen_tracks.add(tid)
+                            obs = await _lookup_face(f.embedding, session.face_repo)
+                            if obs is not None:
+                                await session.observation_engine.emit(obs)
                 except Exception:  # noqa: BLE001 — perception errors must not kill the loop
                     log.exception("face recognize failed")
+
+                # 1.5 scene understanding path (Gemini Vision, ~1 FPS)
+                try:
+                    su = getattr(session, "scene_understander", None)
+                    if su is not None:
+                        scene_data = await su.understand(frame["jpeg"])
+                        if scene_data and scene_data.get("location"):
+                            await session.observation_engine.emit(
+                                SceneObservation(
+                                    location=scene_data["location"],
+                                    objects=scene_data.get("objects", []),
+                                    activity=scene_data.get("activity"),
+                                    confidence=scene_data.get("confidence", 0.8),
+                                )
+                            )
+                except Exception:  # noqa: BLE001
+                    log.exception("scene understand failed")
 
                 # 2. Gemini Live video path (≤1 FPS, enforced by sampler)
                 try:
@@ -97,6 +120,11 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
 
     task = asyncio.create_task(_video_loop(), name="video-loop")
     return task
+
+
+def _track_faces(tracker, faces):
+    """Run faces through the tracker; return [(track_id, detection)] for all."""
+    return tracker.update(faces)
 
 
 async def _lookup_face(embedding, face_repo) -> FaceObservation | None:
@@ -116,7 +144,7 @@ async def _lookup_face(embedding, face_repo) -> FaceObservation | None:
         # CurrentContext.visible_people (it only adds known+named observations). Graph
         # outage must NOT drop the observation — degrade to name=None and still emit.
         name = None
-        if result.is_known and result.person_id:
+        if result.person_id and (result.is_known or result.is_possible):
             try:
                 from graph import repository as graph_repo
 

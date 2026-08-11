@@ -43,10 +43,14 @@ class Consolidator:
         person_service: PersonService | None = None,
         knowledge_service: KnowledgeService | None = None,
         memory_service: MemoryService | None = None,
+        text_embedder=None,
+        text_index=None,
     ) -> None:
         self.person_service = person_service or PersonService()
         self.knowledge_service = knowledge_service or KnowledgeService()
         self.memory_service = memory_service or MemoryService()
+        self.text_embedder = text_embedder
+        self.text_index = text_index
 
     async def consolidate(
         self,
@@ -163,6 +167,16 @@ class Consolidator:
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("fact persist failed: %s", e)
+
+            # Embed facts into the text index for semantic retrieval (graceful if unwired)
+            if self.text_embedder is not None and self.text_index is not None:
+                try:
+                    embeddings = await self.text_embedder.embed_batch(facts)
+                    for fact_text, emb in zip(facts, embeddings, strict=False):
+                        if emb is not None:
+                            self.text_index.add(emb, fact_text)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("fact embedding failed: %s", e)
 
         return {
             "action": "create",

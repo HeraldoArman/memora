@@ -31,6 +31,7 @@ from typing import Any
 
 from context.engine import ContextEngine
 from dto.observations import CurrentContext
+from memory.retrieval.retriever import Retriever
 from reasoning.response.display import Display
 from reasoning.response.speaker import Speaker
 from reasoning.session.live_session import GeminiLiveSession
@@ -53,10 +54,17 @@ class ReasoningAgent:
         display: Display | None = None,
         on_extract: Callable[[str], Any] | None = None,
         emit_observation: Callable[[object], Awaitable[None]] | None = None,
+        planner=None,
+        text_embedder=None,
+        text_index=None,
     ) -> None:
         self.room = room
         self.ctx = tool_ctx
-        self.engine = engine or ContextEngine()
+        self.engine = engine or ContextEngine(
+            retriever=Retriever(text_embedder=text_embedder, text_index=text_index)
+            if text_embedder is not None
+            else None,
+        )
         self.session = session or GeminiLiveSession()
         self.speaker = speaker or Speaker()
         self.display = display or Display(room)
@@ -65,6 +73,8 @@ class ReasoningAgent:
         # emit_observation(obs) — observation feed (ObservationEngine.emit). Final speech
         # transcripts become SpeechObservations so extraction sees the conversation.
         self.emit_observation = emit_observation
+        # proactive planner — periodic context-vs-reminder checker.
+        self.planner = planner
         self._connected = False
 
     async def start(self, current: CurrentContext | None = None) -> None:
@@ -92,6 +102,10 @@ class ReasoningAgent:
         self.speaker.publish(self.room)
         self.session.start_receive()
         self._connected = True
+
+        # 4. start proactive planner if wired
+        if self.planner is not None:
+            self.planner.start(self._get_context, self._on_proactive)
         log.info("reasoning agent started")
 
     async def _on_turn(self) -> None:
@@ -151,11 +165,25 @@ class ReasoningAgent:
         self.ctx.current_context = current
 
     async def stop(self) -> None:
+        if self.planner is not None:
+            await self.planner.stop()
         if self._connected:
             await self.session.aclose()
             await self.speaker.aclose()
         self._connected = False
         log.info("reasoning agent stopped")
+
+    def _get_context(self) -> CurrentContext | None:
+        """Return the latest Working Memory snapshot for the planner."""
+        return self.ctx.current_context
+
+    async def _on_proactive(self, text: str) -> None:
+        """Planner trigger → inject text into the live session."""
+        try:
+            await self.session.send_text(text)
+            log.info("proactive prompt sent: %s", text[:80])
+        except Exception:  # noqa: BLE001
+            log.exception("proactive prompt failed")
 
 
 # --- self-check: wiring (no live connection, no network) ---

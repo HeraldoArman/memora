@@ -224,6 +224,12 @@ class GeminiLiveSession:
             audio=types.Blob(mime_type=f"audio/pcm;rate={sample_rate}", data=pcm)
         )
 
+    async def send_text(self, text: str) -> None:
+        """Push a text instruction to the live session (proactive planner trigger)."""
+        if self._session is None or not text:
+            return
+        await self._session.send_realtime_input(text=text)
+
     async def aclose(self) -> None:
         self._closing = True
         if self._receive_task is not None:

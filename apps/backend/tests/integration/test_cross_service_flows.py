@@ -506,3 +506,115 @@ class TestPipelineConsolidatorIntegration:
         runner = PipelineRunner(extractor=_MockExtractor())
         summary = await runner.run(f"{person_name} hacks {org_name}", session_id=sid)
         assert summary["relationships"] == 1  # only WORKS_AT persisted
+
+
+# ---------------------------------------------------------------------------
+# Face re-recognition: possible match → confirm → enroll improves identity
+# ---------------------------------------------------------------------------
+
+
+class TestFaceReRecognitionFlow:
+    """The core plot-hole fix: user meets someone they know but FAISS doesn't
+    recognise them (bad angle / lighting / different appearance). The possible
+    match (0.60-0.80) should surface the candidate name so the agent can ask
+    'Is this X?' — and on confirmation, re-enrolling the face under the existing
+    person_id strengthens future recognition.
+
+    Also: user meets someone with NO face match at all. They say the name in
+    conversation. The agent should search_person first (to avoid duplicates),
+    then register_face to link the unknown embedding to the existing/new node.
+    """
+
+    async def test_possible_match_surfaces_candidate_name(self) -> None:
+        """Enroll one embedding → lookup with a partially similar embedding
+        → should return is_possible=True with the candidate name."""
+        face_repo = FaceRepository(FaceIndex(512))
+        svc = PersonService(face_repo=face_repo)
+        pid, name = _name("pid"), _name("Asep")
+        await svc.register_person(name=name, person_id=pid)
+        await svc.register_face(_vec(0), pid)
+        # 0.7 cosine similarity — above possible (0.60), below known (0.80)
+        # After L2 normalization the first component must be 0.7, so the second
+        # is sqrt(1 - 0.7^2) = sqrt(0.51) ≈ 0.714.
+        partial = np.zeros(512, dtype=np.float32)
+        partial[0] = 0.7
+        partial[1] = float(np.sqrt(1 - 0.7**2))
+        out = await svc.search_by_face(partial)
+        assert out["known"] is False
+        assert out["possible"] is True
+        assert out["person_id"] == pid
+        assert out["name"] == name
+
+    async def test_re_enroll_after_possible_match_strengthens_identity(self) -> None:
+        """After a possible match is confirmed and the face is re-enrolled under
+        the same person_id, a subsequent lookup with the same vector should
+        register as a strong (known) match — two vectors in the index."""
+        face_repo = FaceRepository(FaceIndex(512))
+        svc = PersonService(face_repo=face_repo)
+        pid, name = _name("pid"), _name("Budi")
+        await svc.register_person(name=name, person_id=pid)
+        # Original enrollment
+        await svc.register_face(_vec(0), pid)
+        # Agent confirmed possible match → re-enroll the new angle
+        partial = np.zeros(512, dtype=np.float32)
+        partial[0] = 0.7
+        partial[1] = float(np.sqrt(1 - 0.7**2))
+        await svc.register_face(partial, pid)
+        # Now lookup with the partial vector → should hit the exact enrolled copy
+        out = await svc.search_by_face(partial)
+        assert out["known"] is True, "re-enrollment should make this a known match"
+        assert out["person_id"] == pid
+        assert out["name"] == name
+
+    async def test_no_match_at_all_returns_unknown(self) -> None:
+        """Completely unknown face (orthogonal vector) returns no person_id."""
+        face_repo = FaceRepository(FaceIndex(512))
+        svc = PersonService(face_repo=face_repo)
+        pid, name = _name("pid"), _name("Caca")
+        await svc.register_person(name=name, person_id=pid)
+        await svc.register_face(_vec(0), pid)
+        out = await svc.search_by_face(_vec(5))  # orthogonal
+        assert out["known"] is False
+        assert out["possible"] is False
+        assert out["person_id"] is None
+
+    async def test_search_person_before_register_avoids_duplicate(self) -> None:
+        """The name-in-conversation flow: agent should search_person first.
+        If the person exists, register_face under the existing person_id —
+        NOT register_person (which would create a duplicate node)."""
+        svc = PersonService()
+        name = _name("Dini")
+        # Person already exists from a prior conversation
+        existing = await svc.register_person(name=name)
+        existing_pid = existing["person_id"]
+        # Agent calls search_person → finds the existing node
+        hits = await svc.search_by_name(name)
+        person_hits = [h for h in hits if h.get("name") == name]
+        assert len(person_hits) >= 1
+        # Agent should use the existing person_id, not register a new one
+        # (verify that re-registering by name without id dedupes)
+        deduped = await svc.register_person(name=name)
+        assert deduped["person_id"] == existing_pid
+
+    async def test_full_unknown_face_to_enrolled_flow(self) -> None:
+        """End-to-end: face not in FAISS → user says name → agent searches →
+        not found → register_person → register_face → next lookup is known."""
+        face_repo = FaceRepository(FaceIndex(512))
+        svc = PersonService(face_repo=face_repo)
+        name = _name("Eka")
+        # 1. Face not in FAISS
+        out = await svc.search_by_face(_vec(2))
+        assert out["known"] is False and out["possible"] is False
+        # 2. Agent searches by name — not found
+        hits = await svc.search_by_name(name)
+        assert not any(h.get("name") == name for h in hits)
+        # 3. Agent registers person
+        node = await svc.register_person(name=name)
+        pid = node["person_id"]
+        # 4. Agent links the face embedding
+        await svc.register_face(_vec(2), pid)
+        # 5. Next lookup → known
+        out2 = await svc.search_by_face(_vec(2))
+        assert out2["known"] is True
+        assert out2["person_id"] == pid
+        assert out2["name"] == name

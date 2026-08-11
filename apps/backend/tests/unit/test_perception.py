@@ -67,6 +67,47 @@ class TestFuse:
         )
         assert ctx.visible_people == ["Asep", "Orang tidak dikenali"]
 
+    def test_possible_match_surfaced_as_maybe(self) -> None:
+        """FAISS possible match (0.60-0.80) surfaces as 'Mungkin <name>' not 'Orang tidak dikenali'."""
+        ctx = fuse(
+            [FaceObservation(person_id="p3", name="Budi", confidence=0.7, is_possible_match=True)]
+        )
+        assert ctx.visible_people == ["Mungkin Budi"]
+
+    def test_possible_match_without_name_falls_back_to_unknown(self) -> None:
+        """Possible match with no name resolved (graph down) → 'Orang tidak dikenali'."""
+        ctx = fuse(
+            [FaceObservation(person_id="p3", name=None, confidence=0.65, is_possible_match=True)]
+        )
+        assert ctx.visible_people == ["Orang tidak dikenali"]
+
+    def test_known_plus_possible_plus_unknown(self) -> None:
+        """All three tiers surface distinctly in one window."""
+        ctx = fuse(
+            [
+                FaceObservation(person_id="p1", name="Asep", confidence=0.95, is_known=True),
+                FaceObservation(
+                    person_id="p2", name="Budi", confidence=0.7, is_possible_match=True
+                ),
+                FaceObservation(confidence=0.3, is_known=False, embedding=None),
+            ]
+        )
+        assert ctx.visible_people == ["Asep", "Mungkin Budi", "Orang tidak dikenali"]
+
+    def test_possible_match_deduped(self) -> None:
+        """Two possible matches for the same name dedup to one 'Mungkin <name>'."""
+        ctx = fuse(
+            [
+                FaceObservation(
+                    person_id="p2", name="Budi", confidence=0.65, is_possible_match=True
+                ),
+                FaceObservation(
+                    person_id="p2", name="Budi", confidence=0.7, is_possible_match=True
+                ),
+            ]
+        )
+        assert ctx.visible_people == ["Mungkin Budi"]
+
     def test_latest_scene_wins(self) -> None:
         ctx = fuse(
             [

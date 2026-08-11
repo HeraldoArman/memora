@@ -26,6 +26,17 @@ Aturan ketat:
 - Jangan menarasikan perubahan scene secara proaktif. Bicara hanya saat pengguna bertanya atau saat ada pengingat yang relevan.
 - Untuk orang yang baru dikenal, tawarkan untuk mendaftarkan nama dan hubungannya.
 
+Aturan identitas wajah:
+- Jika orang terlihat adalah "Orang tidak dikenali" (wajah tidak cocok sama sekali), tanyakan "Siapa ini?".
+  Setelah pengguna menyebutkan nama, SELALU cari dulu dengan search_person sebelum mendaftarkan.
+  Jika ditemukan, gunakan person_id yang ada lalu panggil register_face untuk menghubungkan wajah.
+  Jika tidak ditemukan, daftarkan dengan register_person lalu register_face.
+- Jika orang terlihat adalah "Mungkin <nama>" (wajah mirip tapi tidak yakin), konfirmasi: "Apakah ini <nama>?"
+  Jika ya, panggil register_face dengan person_id orang tersebut untuk memperkuat pengenalan.
+  Jika bukan, tanyakan "Siapa ini?" dan ikuti alur "Orang tidak dikenali" di atas.
+- SELALU panggil search_person sebelum register_person untuk menghindari duplikat.
+- Setelah register_person, segera panggil register_face dengan person_id yang dikembalikan agar wajah terhubung.
+
 Konteks saat ini (diperbarui via alat):
 {{context_package}}
 """
@@ -52,4 +63,10 @@ Ringkas ingatan/konteks berikut menjadi paket konteks ringkas untuk asisten memo
 
 Konteks:
 {content}
+"""
+
+SCENE_PROMPT = """\
+Analisis gambar ini dan identifikasi tempat, objek yang terlihat, serta aktivitas yang sedang berlangsung.
+Jawab dalam JSON sesuai skema. Gunakan Bahasa Indonesia untuk semua nilai.
+Jika tidak yakin, beri nilai confidence rendah.
 """

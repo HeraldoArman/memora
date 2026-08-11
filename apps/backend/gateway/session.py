@@ -38,6 +38,11 @@ class RoomSession:
     # face repo shared by the track handler (identity lookup) + the agent's tools. Built
     # here (not lifespan) because the livekit-agent worker is a separate process.
     face_repo: Any = None
+    # scene understander (Gemini Vision) for the video loop's scene path.
+    scene_understander: Any = None
+    # text embedder + index for semantic memory retrieval.
+    text_embedder: Any = None
+    text_index: Any = None
     # one ConversationSession per room — lazy-created on first extraction so episodic +
     # fact persistence have a session to hang on. None until the first turn consolidates.
     session_id: str | None = None
@@ -68,6 +73,26 @@ class RoomSession:
         tool_ctx.face_repo = face_repo  # wires PersonService so search_by_face/register_face work
         log.info("room session face repo ready: %d embedding(s)", face_repo.size)
 
+        from perception.scene.understander import SceneUnderstander
+
+        scene_understander = SceneUnderstander()
+
+        from vector.text_index import TextMemoryIndex
+
+        from perception.embeddings.text_embeddings import TextEmbedder
+
+        text_embedder = TextEmbedder()
+        text_index = TextMemoryIndex.load(
+            settings.faiss_index_path + ".text", dim=text_embedder.dim
+        )
+
+        from reasoning.planner.planner import ProactivePlanner
+
+        planner = ProactivePlanner(
+            reminder_service=tool_ctx.reminder_service,
+            shopping_service=tool_ctx.shopping_service,
+        )
+
         # wire observation engine → working memory
         obs_engine = ObservationEngine(working_memory)
 
@@ -77,6 +102,9 @@ class RoomSession:
             observation_engine=obs_engine,
             tool_ctx=tool_ctx,
             face_repo=face_repo,
+            scene_understander=scene_understander,
+            text_embedder=text_embedder,
+            text_index=text_index,
         )
 
         # extraction hook: consolidate each finished turn via the pipeline runner. Lazy
@@ -84,6 +112,7 @@ class RoomSession:
         # The ConversationSession is created lazily on the first turn (DB stays down-safe
         # for rooms that never speak).
         async def _on_extract(text: str) -> None:
+            from pipeline.consolidator import Consolidator
             from pipeline.runner import PipelineRunner
             from services import MemoryService
 
@@ -93,7 +122,13 @@ class RoomSession:
                         summary="device session"
                     )
                     log.info("conversation session created: %s", session.session_id)
-                await PipelineRunner().run(text, session_id=session.session_id)
+                consolidator = Consolidator(
+                    text_embedder=session.text_embedder,
+                    text_index=session.text_index,
+                )
+                await PipelineRunner(consolidator=consolidator).run(
+                    text, session_id=session.session_id
+                )
             except Exception:  # noqa: BLE001 — extraction must not kill the room
                 log.exception("pipeline run failed for turn")
 
@@ -101,6 +136,9 @@ class RoomSession:
             room=room,
             tool_ctx=tool_ctx,
             on_extract=_on_extract,
+            planner=planner,
+            text_embedder=text_embedder,
+            text_index=text_index,
             # transcription → SpeechObservation → ObservationEngine (perception.md §10:
             # speech must reach CurrentContext so extraction sees the conversation).
             emit_observation=obs_engine.emit,

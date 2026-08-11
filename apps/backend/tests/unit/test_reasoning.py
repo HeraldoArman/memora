@@ -39,6 +39,20 @@ class TestSystemPrompt:
         assert "{{context_package}}" not in base
         assert "(belum ada konteks)" in base
 
+    def test_contains_face_identity_rules(self) -> None:
+        """System prompt must instruct the agent on face-name linking."""
+        base = build_system_instruction("")
+        assert "Aturan identitas wajah" in base
+        assert "Mungkin" in base, "prompt must reference possible-match 'Mungkin <name>'"
+        assert "Orang tidak dikenali" in base, "prompt must reference fully-unknown flow"
+        assert "search_person" in base, "prompt must instruct search before register"
+        assert "register_face" in base, "prompt must instruct face enrollment"
+
+    def test_search_before_register_guidance(self) -> None:
+        """Prompt must tell the agent to search_person before register_person to avoid duplicates."""
+        base = build_system_instruction("")
+        assert "SELALU" in base and "search_person" in base and "register_person" in base
+
 
 class TestLiveSessionRouting:
     def _stub(self):
@@ -139,6 +153,28 @@ class TestLiveSessionRouting:
         await s.send_audio(b"\x00\x01", sample_rate=8000)
         call = fake_session.send_realtime_input.await_args.kwargs["audio"]
         assert call.mime_type == "audio/pcm;rate=8000"
+
+    async def test_send_text_forward(self) -> None:
+        fake_session = MagicMock()
+        fake_session.send_realtime_input = AsyncMock()
+        s = _session_with_ctx()
+        s._session = fake_session
+        await s.send_text("[PROAKTIF] ingat obat")
+        fake_session.send_realtime_input.assert_awaited_once()
+        assert fake_session.send_realtime_input.await_args.kwargs["text"] == "[PROAKTIF] ingat obat"
+
+    async def test_send_text_noop_without_session(self) -> None:
+        s = _session_with_ctx()
+        assert s._session is None
+        await s.send_text("hello")  # must not raise
+
+    async def test_send_text_noop_on_empty(self) -> None:
+        fake_session = MagicMock()
+        fake_session.send_realtime_input = AsyncMock()
+        s = _session_with_ctx()
+        s._session = fake_session
+        await s.send_text("")
+        fake_session.send_realtime_input.assert_not_called()
 
     async def test_reconnect_loop_restores_session(self) -> None:
         class _FakeLive:
@@ -297,6 +333,64 @@ class TestReasoningAgent:
         agent.session.aclose.assert_awaited_once()
         agent.speaker.aclose.assert_awaited_once()
         assert not agent._connected
+
+
+class TestAgentProactive:
+    def _agent_with_planner(self) -> ReasoningAgent:
+        session = MagicMock()
+        session.connect = AsyncMock()
+        session.aclose = AsyncMock()
+        session.send_text = AsyncMock()
+        session.start_receive = MagicMock()
+        session.set_audio_sink = MagicMock()
+        session.set_turn_complete_callback = MagicMock()
+        engine = MagicMock()
+        engine.build = AsyncMock(return_value=(MagicMock(), "ctx text"))
+        speaker = MagicMock()
+        speaker.publish = MagicMock()
+        speaker.aclose = AsyncMock()
+        display = MagicMock()
+        display.show = AsyncMock()
+        planner = MagicMock()
+        planner.start = MagicMock()
+        planner.stop = AsyncMock()
+        agent = ReasoningAgent(
+            room=MagicMock(),
+            tool_ctx=ToolContext(),
+            engine=engine,
+            session=session,
+            speaker=speaker,
+            display=display,
+            planner=planner,
+        )
+        return agent
+
+    async def test_start_starts_planner(self) -> None:
+        agent = self._agent_with_planner()
+        await agent.start(current=None)
+        agent.planner.start.assert_called_once()
+
+    async def test_stop_stops_planner(self) -> None:
+        agent = self._agent_with_planner()
+        await agent.start(current=None)
+        await agent.stop()
+        agent.planner.stop.assert_awaited_once()
+
+    async def test_on_proactive_sends_text(self) -> None:
+        agent = self._agent_with_planner()
+        await agent._on_proactive("[PROAKTIF] Ingat beli obat")
+        agent.session.send_text.assert_awaited_once_with("[PROAKTIF] Ingat beli obat")
+
+    async def test_on_proactive_failure_caught(self) -> None:
+        agent = self._agent_with_planner()
+        agent.session.send_text = AsyncMock(side_effect=RuntimeError("session down"))
+        await agent._on_proactive("test")  # must not raise
+
+    def test_get_context_returns_current(self) -> None:
+        agent = self._agent_with_planner()
+        ctx = CurrentContext(scene="apotek")
+        agent.ctx.current_context = ctx
+        assert agent._get_context() is ctx
 
 
 class TestSpeaker:
