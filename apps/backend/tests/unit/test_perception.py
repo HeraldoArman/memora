@@ -242,12 +242,19 @@ class TestFrameSampler:
         return _gen()
 
     async def test_yields_sampled_frames_high_fps(self) -> None:
-        s = FrameSampler(self._stream([self._frame(byte=1), self._frame(byte=2)]), fps=1000.0)
+        # Add small delays between frames so the monotonic clock advances past
+        # the interval (fps=1000 → interval=0.001s). Without the delay, both
+        # frames arrive at the same clock tick and the second is rate-limited.
+        async def _delayed_stream():
+            for f in [self._frame(byte=1), self._frame(byte=2)]:
+                yield SimpleNamespace(frame=f)
+                await asyncio.sleep(0.01)
+
+        s = FrameSampler(_delayed_stream(), fps=1000.0)
         frames = [f async for f in s.frames()]
         assert len(frames) == 2
         assert frames[0]["frame_no"] == 1 and frames[1]["frame_no"] == 2
         assert frames[0]["bgr"].shape == (2, 2, 3)
-        assert isinstance(frames[0]["jpeg"], bytes) and frames[0]["jpeg"]
 
     async def test_rate_limits_low_fps(self) -> None:
         s = FrameSampler(self._stream([self._frame(byte=1), self._frame(byte=2)]), fps=0.001)

@@ -27,11 +27,11 @@ from gateway.livekit.entrypoint import entrypoint
 
 log = logging.getLogger(__name__)
 
-# AgentServer is the livekit-agents >= 1.6 entrypoint surface. rtc_session registers
-# our per-room handler; agent_name must match a LiveKit Cloud dispatch rule (dev mode
-# auto-dispatches any room when no explicit rule filters it out).
+_settings = get_settings()
+log.info("worker registering agent_name=%s", _settings.agent_name)
+
 server = AgentServer()
-server.rtc_session(entrypoint, agent_name="memora-agent")
+server.rtc_session(entrypoint, agent_name=_settings.agent_name)
 
 
 class _HealthHandler(BaseHTTPRequestHandler):

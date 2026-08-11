@@ -11,6 +11,7 @@ const schema = z.object({
     .refine((v) => v.startsWith("ws"), "LIVEKIT_URL must start with ws:// or wss://"),
   LIVEKIT_API_KEY: z.string().min(1, "LIVEKIT_API_KEY is required"),
   LIVEKIT_API_SECRET: z.string().min(1, "LIVEKIT_API_SECRET is required"),
+  AGENT_NAME: z.string().min(1, "AGENT_NAME is required"),
   // public — exposed to the browser so the client knows the server address.
   NEXT_PUBLIC_LIVEKIT_URL: z
     .string()
@@ -32,6 +33,7 @@ export function getServerEnv(): Env {
     LIVEKIT_URL: process.env.LIVEKIT_URL,
     LIVEKIT_API_KEY: process.env.LIVEKIT_API_KEY,
     LIVEKIT_API_SECRET: process.env.LIVEKIT_API_SECRET,
+    AGENT_NAME: process.env.AGENT_NAME,
     NEXT_PUBLIC_LIVEKIT_URL: process.env.NEXT_PUBLIC_LIVEKIT_URL,
   });
   if (!parsed.success) {

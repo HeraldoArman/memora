@@ -57,6 +57,7 @@ class GeminiLiveSession:
         # `async with` block). _cm is the entered cm; exited on close/reconnect.
         self._cm: Any = None
         self._receive_task: asyncio.Task | None = None
+        self._connect_task: asyncio.Task | None = None
         # wiring set at connect()
         self._ctx: ToolContext | None = None
         self._on_text: Callable[[str], Awaitable[None]] | None = None
@@ -93,16 +94,25 @@ class GeminiLiveSession:
         fires for model text parts (for the display); `on_transcription(text, is_final)`
         fires for input speech transcription (for the observation feed). The context text
         is retained so the receive loop can re-seed the system prompt on reconnect.
+
+        Non-blocking: spawns a background task to open the connection with retry. Prompts
+        queued while connecting are flushed on successful _open(). The receive loop
+        (started by start_receive()) handles subsequent reconnects.
         """
         self._ctx = ctx
         self._on_text = on_text
         self._on_transcription = on_transcription
         self._context_text = context_text
-        # ponytail: retry with backoff — Gemini Live WS can time out on first connect
-        while True:
+        self._closing = False
+        # spawn background connect; don't block agent.start()
+        self._connect_task = asyncio.create_task(self._connect_with_retry(), name="gemini-connect")
+
+    async def _connect_with_retry(self) -> None:
+        """Background connect with backoff. Flushed pending prompts on success."""
+        while not self._closing:
             try:
                 await self._open()
-                return
+                return  # success
             except Exception:
                 log.warning("gemini live connect failed; retrying in %.1fs", self._backoff_s)
                 await asyncio.sleep(self._backoff_s)
@@ -151,25 +161,35 @@ class GeminiLiveSession:
             log.info("re-injected %d recent turn(s) after reconnect", len(self._recent_turns))
 
     def start_receive(self) -> asyncio.Task:
-        """Spawn the receive loop as a background task."""
-        if self._session is None:
-            raise RuntimeError("connect() first")
-        self._closing = False
+        """Spawn the receive loop as a background task.
+
+        The receive loop waits for _session to become non-None (the background connect
+        task sets it on success), then processes messages. If connect is still pending,
+        the loop just waits.
+        """
+        if self._closing:
+            raise RuntimeError("session is closing")
         self._receive_task = asyncio.create_task(self._receive_loop(), name="gemini-receive")
         return self._receive_task
 
     async def _receive_loop(self) -> None:
         """Receive server messages forever; reconnect with backoff on drop.
 
-        Phase 7 hardening: if the connection closes or errors (transient network, API
-        hiccup), the loop re-opens the live session and keeps going. Perception + memory
-        loops are independent tasks and keep running throughout — they push into
-        send_video/send_audio which are no-ops while `self._session is None`. aclose()
-        sets `_closing` to break the loop.
+        Waits for the background connect task to set _session, then processes messages.
+        On connection drop, re-opens with backoff. aclose() sets _closing to break.
         """
         while not self._closing:
             if self._session is None:
-                await self._reconnect()
+                # wait for the background connect task, or reconnect if it's done
+                if self._connect_task is not None and not self._connect_task.done():
+                    try:
+                        await asyncio.wait_for(self._connect_task, timeout=30.0)
+                    except (TimeoutError, asyncio.CancelledError):
+                        pass
+                    except Exception:
+                        pass
+                if self._session is None:
+                    await self._reconnect()
                 continue
             try:
                 async for msg in self._session.receive():
@@ -334,6 +354,13 @@ class GeminiLiveSession:
 
     async def aclose(self) -> None:
         self._closing = True
+        if self._connect_task is not None:
+            self._connect_task.cancel()
+            try:
+                await self._connect_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+            self._connect_task = None
         if self._receive_task is not None:
             self._receive_task.cancel()
             try:

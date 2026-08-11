@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from dto.observations import FaceObservation, SceneObservation
+from dto.observations import FaceObservation
 
 log = logging.getLogger(__name__)
 
@@ -68,24 +68,19 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
     video_stream = rtc.VideoStream(track)
     sampler = FrameSampler(video_stream)
     recognizer = FaceRecognizer()
-    # ponytail: scene understanding disabled — Gemini Vision client leaks memory
-    # (~100MB/min at 2s interval). The native-audio model gets visual context via
-    # tool calls (visible_people, current_scene). Re-enable when leak is fixed.
-    _scene_counter = 0
-    _SCENE_INTERVAL = 999999
 
     async def _video_loop() -> None:
-        nonlocal _scene_counter
         log.info("video loop started")
         try:
             async for frame in sampler.frames():
-                # 1. face identity path (deterministic; Gemini can't match a gallery)
+                # face identity path (deterministic; Gemini can't match a gallery)
                 try:
-                    faces = recognizer.detect_and_embed(frame["bgr"])
+                    bgr = frame["bgr"]
+                    faces = recognizer.detect_and_embed(bgr)
                     log.info(
                         "frame: %dx%d faces=%d",
-                        frame["bgr"].shape[1],
-                        frame["bgr"].shape[0],
+                        bgr.shape[1],
+                        bgr.shape[0],
                         len(faces),
                     )
                     if faces:
@@ -95,35 +90,17 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
                             if not obs.is_known:
                                 session.tool_ctx.cache_unknown_embedding(obs.embedding)
                             await session.observation_engine.emit(obs)
+                        del f, obs
+                    del bgr, faces
                 except Exception:  # noqa: BLE001 — perception errors must not kill the loop
                     log.exception("face recognize failed")
 
-                # 1.5 scene understanding path (Gemini Vision, every 5s not 1 FPS)
-                _scene_counter += 1
-                if _scene_counter >= _SCENE_INTERVAL:
-                    _scene_counter = 0
-                    try:
-                        su = getattr(session, "scene_understander", None)
-                        if su is not None:
-                            scene_data = await su.understand(frame["jpeg"])
-                            if scene_data and scene_data.get("location"):
-                                await session.observation_engine.emit(
-                                    SceneObservation(
-                                        location=scene_data["location"],
-                                        objects=scene_data.get("objects", []),
-                                        activity=scene_data.get("activity"),
-                                        confidence=scene_data.get("confidence", 0.8),
-                                    )
-                                )
-                    except Exception:  # noqa: BLE001
-                        log.exception("scene understand failed")
+                # ponytail: scene understanding disabled — Gemini Vision client leaks memory.
+                # The native-audio model gets visual context via tool calls (visible_people,
+                # current_scene). No feed_video either — sending raw JPEGs to
+                # send_realtime_input(video=...) caused ~66MB/s memory growth.
 
-                # ponytail: no feed_video to Gemini Live — the native-audio model gets
-                # visual context through tool calls (visible_people, current_scene).
-                # Sending raw JPEGs to send_realtime_input(video=...) caused ~66MB/s
-                # memory growth in the SDK (274MB→3.2GB in 3min, process killed).
-
-                # 2. sync tool context so tools see fresh CurrentContext
+                # sync tool context so tools see fresh CurrentContext
                 session.sync_context()
         except asyncio.CancelledError:
             raise

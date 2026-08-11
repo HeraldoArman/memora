@@ -10,7 +10,6 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from google.genai import live, types
 
 from dto.observations import CurrentContext, SpeechObservation
@@ -131,10 +130,17 @@ class TestLiveSessionRouting:
         await s._handle_audio(types.Blob(data=b""))
         assert len(fed) == 1
 
-    async def test_start_receive_requires_connect(self) -> None:
+    async def test_start_receive_ok_without_session(self) -> None:
+        # connect() is now non-blocking — start_receive should work even if
+        # the background connect task hasn't set _session yet.
         s = GeminiLiveSession(client=MagicMock())
-        with pytest.raises(RuntimeError, match="connect"):
-            s.start_receive()
+        s._closing = False
+        task = s.start_receive()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     async def test_send_video_audio_noop_without_session(self) -> None:
         s = _session_with_ctx()

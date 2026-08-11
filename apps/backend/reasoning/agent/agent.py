@@ -88,7 +88,7 @@ class ReasoningAgent:
         self.ctx.current_context = current
         _, context_text = await self.engine.build(current)
 
-        # 2. connect live session with tool surface + seeded prompt
+        # 2. connect live session (non-blocking — background task with retry)
         self.session.set_audio_sink(self.speaker.feed)
         self.session.set_turn_complete_callback(self._on_turn)
         await self.session.connect(
@@ -98,7 +98,7 @@ class ReasoningAgent:
             on_transcription=self._on_transcription,
         )
 
-        # 3. publish speaker track + start receive loop
+        # 3. publish speaker track + start receive loop (waits for connect in background)
         self.speaker.publish(self.room)
         self.session.start_receive()
         self._connected = True

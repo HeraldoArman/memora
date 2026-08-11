@@ -6,6 +6,7 @@ so a misconfigured deploy fails loudly at startup, not mid-request.
 
 from __future__ import annotations
 
+import socket
 from functools import lru_cache
 
 from pydantic import field_validator
@@ -80,6 +81,12 @@ class Settings(BaseSettings):
 
     # === Worker health check ===
     worker_health_port: int = 8001
+
+    # === Agent identity ===
+    # Derived from hostname so each machine gets a unique agent name — prevents
+    # dispatch cross-routing when multiple developers share a LiveKit Cloud account.
+    # Override with AGENT_NAME env if you want a fixed custom name.
+    agent_name: str = f"memora-agent-{socket.gethostname().split('.')[0]}"
 
     # === Locale ===
     # IANA tz for local-day windows (reminders, schedules). Indonesia is UTC+7.
