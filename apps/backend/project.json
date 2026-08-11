@@ -13,7 +13,7 @@
     "dev": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "uv run uvicorn app:app --reload --app-dir apps/backend --port 8000"
+        "command": "uv run uvicorn app:app --reload --reload-dir apps/backend --app-dir apps/backend --port 8000"
       }
     },
     "migrate": {

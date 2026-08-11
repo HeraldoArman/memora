@@ -146,6 +146,15 @@ class ReasoningAgent:
         except Exception:  # noqa: BLE001 — observation failure must not kill the receive loop
             log.exception("emit speech observation failed")
 
+    async def feed_prompt(self, text: str) -> None:
+        """Inject a text prompt into the live session (e.g. from dashboard "prompt" topic).
+
+        This is a direct text input to Gemini Live — the model processes it as user input
+        and responds with audio (→ speaker) + output_transcription (→ display).
+        """
+        log.info("feeding prompt to gemini: %r", text[:120])
+        await self.session.send_text(text)
+
     async def feed_video(self, jpeg: bytes) -> None:
         """Perception sampler pushes a frame here (≤1 FPS)."""
         await self.session.send_video(jpeg)

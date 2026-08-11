@@ -31,8 +31,11 @@ class Display:
         if len(text) > _MAX_PAYLOAD:
             text = text[:_MAX_PAYLOAD]
             # ponytail: hard truncation; no ellipsis logic — OLED scrolls/truncates itself
+        log.info(
+            "display.show → publish topic=%s len=%d text=%r", _DISPLAY_TOPIC, len(text), text[:120]
+        )
         await self._room.local_participant.publish_data(text, reliable=True, topic=_DISPLAY_TOPIC)
-        log.debug("display published %d chars", len(text))
+        log.info("display published OK len=%d", len(text))
 
 
 # --- self-check: truncation boundary ---

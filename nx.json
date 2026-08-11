@@ -38,5 +38,6 @@
       "cache": false
     }
   },
-  "plugins": ["@nxlv/python"]
+  "plugins": ["@nxlv/python"],
+  "analytics": true
 }

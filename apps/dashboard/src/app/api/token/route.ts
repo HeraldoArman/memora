@@ -1,12 +1,19 @@
-import { AccessToken } from "livekit-server-sdk";
+import { AccessToken, RoomAgentDispatch, RoomConfiguration } from "livekit-server-sdk";
 import { NextResponse } from "next/server";
 import { getServerEnv } from "@/lib/env";
 
-// ponytail: no auth, hardcoded room — this is a local dummy-device test harness.
-// Add auth + a room/identity chooser before exposing the dashboard publicly.
+// ponytail: no auth — this is a local dummy-device test harness. Each Connect
+// gets a fresh unique room so the LiveKit dev-mode worker always sees a clean
+// participant-join event (a stale participant in a reused room never re-triggers
+// an agent dispatch). Add auth before exposing the dashboard publicly.
 
-const DEFAULT_ROOM = "memora-test";
 const DEFAULT_IDENTITY = "dummy-device";
+
+function uniqueRoom(): string {
+  // memora-<timestamp>-<rand> — unique enough for local dev; collides are harmless
+  // (LiveKit merges same-room joins, but the timestamp makes that near-impossible).
+  return `memora-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 export async function POST(request: Request) {
   let serverUrl: string;
@@ -24,7 +31,7 @@ export async function POST(request: Request) {
     );
   }
 
-  let roomName = DEFAULT_ROOM;
+  let roomName = uniqueRoom();
   let identity = DEFAULT_IDENTITY;
   try {
     const body = await request.json();
@@ -32,7 +39,7 @@ export async function POST(request: Request) {
       roomName = body.room_name.trim();
     if (typeof body.identity === "string" && body.identity.trim()) identity = body.identity.trim();
   } catch {
-    // no body or invalid JSON → use defaults
+    // no body or invalid JSON → fresh unique room
   }
 
   const at = new AccessToken(apiKey, apiSecret, { identity, ttl: "2h" });
@@ -42,6 +49,9 @@ export async function POST(request: Request) {
     canPublish: true,
     canSubscribe: true,
     canPublishData: true,
+  });
+  at.roomConfig = new RoomConfiguration({
+    agents: [new RoomAgentDispatch({ agentName: "memora-agent" })],
   });
 
   const token = await at.toJwt();

@@ -12,6 +12,7 @@ import { TelemetryControls } from "@/components/device/telemetry-controls";
 // Add a room/identity chooser when the dashboard grows.
 const DEVICE_TOPIC = "device";
 const DISPLAY_TOPIC = "display";
+const PROMPT_TOPIC = "prompt";
 
 export function DeviceHarness() {
   const [status, setStatus] = useState<Status>("disconnected");
@@ -19,6 +20,7 @@ export function DeviceHarness() {
   const [display, setDisplay] = useState<string>("");
   const [battery, setBattery] = useState(85);
   const [buttonPressed, setButtonPressed] = useState(false);
+  const [prompt, setPrompt] = useState("");
 
   const roomRef = useRef<Room | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -70,10 +72,20 @@ export function DeviceHarness() {
       room.on(
         RoomEvent.DataReceived,
         (payload: Uint8Array, _participant: unknown, _kind: unknown, topic?: string) => {
+          const text = new TextDecoder().decode(payload);
+          console.log(
+            "[DataReceived] topic=",
+            topic,
+            "len=",
+            payload.byteLength,
+            "text=",
+            text.slice(0, 120),
+          );
           if (topic === DISPLAY_TOPIC) {
-            const text = new TextDecoder().decode(payload);
             setDisplay(text);
             log(`display ← "${text.slice(0, 80)}"`);
+          } else {
+            console.log("[DataReceived] topic mismatch — expected=", DISPLAY_TOPIC, "got=", topic);
           }
         },
       );
@@ -168,6 +180,44 @@ export function DeviceHarness() {
       />
 
       <ConnectionLog logs={logs} />
+
+      <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+        <h2 className="mb-3 text-sm font-medium text-neutral-300">Send prompt to agent</h2>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && prompt.trim() && roomRef.current) {
+                void roomRef.current.localParticipant.publishData(
+                  new TextEncoder().encode(prompt.trim()),
+                  { topic: PROMPT_TOPIC, reliable: true },
+                );
+                log(`sent prompt: "${prompt.trim()}"`);
+                setPrompt("");
+              }
+            }}
+            placeholder="e.g. tulis tes"
+            className="flex-1 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-white placeholder:text-neutral-500"
+          />
+          <button
+            onClick={() => {
+              if (!prompt.trim() || !roomRef.current) return;
+              void roomRef.current.localParticipant.publishData(
+                new TextEncoder().encode(prompt.trim()),
+                { topic: PROMPT_TOPIC, reliable: true },
+              );
+              log(`sent prompt: "${prompt.trim()}"`);
+              setPrompt("");
+            }}
+            disabled={!prompt.trim() || status !== "connected"}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-40"
+          >
+            Send
+          </button>
+        </div>
+      </section>
     </main>
   );
 }

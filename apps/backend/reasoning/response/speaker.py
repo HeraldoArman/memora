@@ -12,6 +12,7 @@ by Gemini, each is a valid independent AudioFrame.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from env import get_settings
@@ -61,7 +62,8 @@ class Speaker:
                 return
         samples_per_channel = len(pcm) // frame_bytes
         frame = rtc.AudioFrame(pcm, _SAMPLE_RATE, _CHANNELS, samples_per_channel)
-        self._source.capture_frame(frame)
+        # capture_frame is async — schedule it on the event loop without blocking
+        asyncio.ensure_future(self._source.capture_frame(frame))
 
     async def aclose(self) -> None:
         if self._pub is not None:

@@ -1,0 +1,23 @@
+{
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "name": "backend-worker",
+  "projectType": "application",
+  "sourceRoot": "apps/backend/workers",
+  "tags": ["backend"],
+  "targets": {
+    "dev": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/backend",
+        "command": "uv run python -m workers.livekit_worker dev"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/backend",
+        "command": "uv run python -m workers.livekit_worker start"
+      }
+    }
+  }
+}

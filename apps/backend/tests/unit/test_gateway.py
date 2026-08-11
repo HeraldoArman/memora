@@ -14,7 +14,7 @@ import numpy as np
 from vector.index import FaceIndex
 from vector.repository import FaceRepository
 
-from gateway.livekit.entrypoint import _init_stores, build_worker_options, entrypoint
+from gateway.livekit.entrypoint import _init_stores, entrypoint
 from gateway.livekit.track_handler import _AudioShim, _lookup_face
 from gateway.session import RoomSession
 from perception.observation.engine import ObservationEngine
@@ -282,8 +282,9 @@ class TestInitStores:
         init_driver.assert_awaited_once()
 
 
-class TestWorkerOptions:
-    def test_build_worker_options(self) -> None:
-        opts = build_worker_options()
-        fn = getattr(opts, "entrypoint_fnc", None) or getattr(opts, "entrypoint", None)
-        assert fn is entrypoint
+class TestEntrypoint:
+    def test_entrypoint_is_async_handler(self) -> None:
+        import inspect
+
+        assert callable(entrypoint)
+        assert inspect.iscoroutinefunction(entrypoint)

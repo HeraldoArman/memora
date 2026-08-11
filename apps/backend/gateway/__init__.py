@@ -4,7 +4,7 @@ entrypoint.py is the JobContext job; track_handler.py + data_channel.py wire per
 in; session.py holds per-room state (agent + working memory + observation engine).
 """
 
-from gateway.livekit.entrypoint import build_worker_options, entrypoint
+from gateway.livekit.entrypoint import entrypoint
 from gateway.session import RoomSession
 
-__all__ = ["build_worker_options", "entrypoint", "RoomSession"]
+__all__ = ["entrypoint", "RoomSession"]

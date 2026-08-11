@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from env import get_settings
 from google import genai
@@ -51,6 +52,10 @@ class GeminiLiveSession:
     def __init__(self, client: genai.Client | None = None) -> None:
         self._client = client or genai.Client(api_key=get_settings().gemini_api_key)
         self._session: live.AsyncSession | None = None
+        # live.connect() is an async context manager; we enter it manually so the
+        # websocket stays open across the receive loop and reconnects (not a one-shot
+        # `async with` block). _cm is the entered cm; exited on close/reconnect.
+        self._cm: Any = None
         self._receive_task: asyncio.Task | None = None
         # wiring set at connect()
         self._ctx: ToolContext | None = None
@@ -62,6 +67,10 @@ class GeminiLiveSession:
         # ponytail: capped exponential backoff; 5s ceiling is enough for a hackathon
         self._backoff_s = 1.0
         self._max_backoff_s = 5.0
+        # output transcription arrives in fragments (finished=None) across a turn; we
+        # accumulate them and flush the full sentence to on_text (OLED) at turn boundary,
+        # so the display shows one coherent line instead of flickering per-fragment.
+        self._out_buf = ""
 
     async def connect(
         self,
@@ -92,17 +101,26 @@ class GeminiLiveSession:
         — arch decision #2: dynamic context flows via tool calls, not the system prompt,
         so reseeding the original context_text on reconnect is correct.
         """
+        # ponytail: native-audio Live models are AUDIO-only (TEXT modality is rejected
+        # — "combination of response modalities (AUDIO, TEXT) is not supported"). To
+        # still drive the glasses OLED, we enable output_audio_transcription: the model's
+        # spoken response is transcribed server-side and arrives as
+        # LiveServerContent.output_transcription, which we route to on_text (Display).
         cfg = types.LiveConnectConfig(
             system_instruction=build_system_instruction(self._context_text),
             tools=[TOOLS_BLOCK],
-            response_modalities=[types.Modality.AUDIO, types.Modality.TEXT],
+            response_modalities=[types.Modality.AUDIO],
             input_audio_transcription=types.AudioTranscriptionConfig(),
-            # Conservative proactivity: don't auto-narrate scene changes (plan risk #2).
-            proactivity=types.ProactivityConfig(proactive_audio=False),
+            output_audio_transcription=types.AudioTranscriptionConfig(),
+            # ponytail: proactivity config omitted — gemini-2.0-flash-exp rejected the
+            # `proactivity` field. Re-add ProactivityConfig when GEMINI_LIVE_MODEL moves
+            # to a 2.5+ Live model that supports it.
         )
-        self._session = await self._client.aio.live.connect(
-            model=get_settings().gemini_live_model, config=cfg
-        )
+        # connect() returns an async context manager (yields AsyncSession). Enter it
+        # manually so the session persists beyond a single `async with` block — the
+        # receive loop + reconnects drive its lifetime via _close_cm().
+        self._cm = self._client.aio.live.connect(model=get_settings().gemini_live_model, config=cfg)
+        self._session = await self._cm.__aenter__()
         log.info("gemini live connected (model=%s)", get_settings().gemini_live_model)
 
     def start_receive(self) -> asyncio.Task:
@@ -132,15 +150,29 @@ class GeminiLiveSession:
                         return
                     await self._handle(msg)
                 # receive() ended cleanly (server closed stream) → reconnect
+                await self._close_cm()
                 self._session = None
             except asyncio.CancelledError:
                 raise
             except live.ConnectionClosed:
                 log.info("gemini live connection closed; reconnecting")
+                await self._close_cm()
                 self._session = None
             except Exception:  # noqa: BLE001 — don't die; reconnect loop owns retries
                 log.exception("gemini receive loop error; reconnecting")
+                await self._close_cm()
                 self._session = None
+
+    async def _close_cm(self) -> None:
+        """Exit the live.connect() context manager if entered (closes the websocket).
+        Safe to call when already closed / never opened."""
+        cm, self._cm = self._cm, None
+        if cm is None:
+            return
+        try:
+            await cm.__aexit__(None, None, None)
+        except Exception:  # noqa: BLE001 — best-effort teardown on a possibly-dead ws
+            log.debug("live cm exit failed", exc_info=True)
 
     async def _reconnect(self) -> None:
         """Re-open the live session with capped exponential backoff."""
@@ -165,14 +197,29 @@ class GeminiLiveSession:
         # input_transcription = final transcript (is_final=True); interim = partial.
         if self._on_transcription is not None:
             if sc.input_transcription:
+                log.info("input_transcription(final): %r", sc.input_transcription.text[:120])
                 await self._on_transcription(sc.input_transcription.text, True)
             if sc.interim_input_transcription:
                 await self._on_transcription(sc.interim_input_transcription.text, False)
-        # model turn parts: text → display, audio → speaker.
+        # output_transcription = the model's spoken response transcribed server-side.
+        # Native-audio Live models are AUDIO-only (no TEXT modality), so this is the
+        # text source for the glasses OLED (on_text → Display). The API streams it in
+        # fragments (finished=None) across a turn; we accumulate and flush the full
+        # sentence once at the turn boundary so the OLED shows one coherent line
+        # instead of flickering per-fragment.
+        if sc.output_transcription and self._on_text is not None:
+            t = sc.output_transcription
+            if t.text:
+                self._out_buf += t.text
+                log.info(
+                    "output_transcription fragment: %r (buf=%d)", t.text[:120], len(self._out_buf)
+                )
+        # model turn parts: text → display (legacy TEXT-modality path), audio → speaker.
         turn = sc.model_turn
         if turn is not None:
             for part in turn.parts or []:
                 if part.text and self._on_text is not None:
+                    log.info("model_turn text part: %r", part.text[:120])
                     await self._on_text(part.text)
                 # audio is handled by the agent/speaker wiring via an audio sink set
                 # at connect; the blob flows through _handle_audio.
@@ -180,6 +227,17 @@ class GeminiLiveSession:
                     await self._handle_audio(part.inline_data)
         # turn boundary signals (decision #3): turn_complete/generation_complete.
         if sc.turn_complete or sc.generation_complete:
+            log.info(
+                "turn boundary (turn_complete=%s gen_complete=%s) — flushing out_buf len=%d",
+                sc.turn_complete,
+                sc.generation_complete,
+                len(self._out_buf),
+            )
+            # flush the accumulated output transcription to the OLED, then reset.
+            if self._out_buf and self._on_text is not None:
+                log.info("flush → on_text len=%d text=%r", len(self._out_buf), self._out_buf[:120])
+                await self._on_text(self._out_buf)
+            self._out_buf = ""
             await self._on_turn_complete()
 
     async def _handle_audio(self, blob: types.Blob) -> None:
@@ -239,11 +297,8 @@ class GeminiLiveSession:
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
             self._receive_task = None
-        if self._session is not None:
-            try:
-                await self._session.close()
-            except Exception:  # noqa: BLE001
-                log.debug("session close failed", exc_info=True)
+        # exit the live.connect() cm (closes the websocket); _session is invalid after.
+        await self._close_cm()
         self._session = None
         log.info("gemini live session closed")
 
@@ -263,9 +318,9 @@ def _self_check() -> None:  # pragma: no cover
     cfg = types.LiveConnectConfig(
         system_instruction=build_system_instruction(""),
         tools=[TOOLS_BLOCK],
-        response_modalities=[types.Modality.AUDIO, types.Modality.TEXT],
+        response_modalities=[types.Modality.AUDIO],
         input_audio_transcription=types.AudioTranscriptionConfig(),
-        proactivity=types.ProactivityConfig(proactive_audio=False),
+        output_audio_transcription=types.AudioTranscriptionConfig(),
     )
     assert cfg.tools, "config must carry the tool surface"
     assert "Memora" in str(cfg.system_instruction), "system instruction missing persona"
@@ -326,11 +381,35 @@ def _self_check() -> None:  # pragma: no cover
     assert received_transcripts == [("apa ini?", True), ("apa in", False)], received_transcripts
     print("live_session self-check OK: input_transcription→final, interim→partial")
 
+    # --- output_transcription → accumulate → flush at turn boundary (OLED text) ---
+    # Native-audio models stream output_transcription in fragments (finished=None);
+    # we accumulate and emit the full sentence once on turn_complete/generation_complete.
+    received_text.clear()
+    s._out_buf = ""
+    sc = types.LiveServerContent(
+        output_transcription=types.Transcription(text="Saya ", finished=None)
+    )
+    asyncio.run(s._handle_content(sc))  # fragment 1 → buffered, not emitted
+    assert received_text == [], received_text
+    sc = types.LiveServerContent(
+        output_transcription=types.Transcription(text="asisten memora.", finished=None)
+    )
+    asyncio.run(s._handle_content(sc))  # fragment 2 → buffered, not emitted
+    assert received_text == [], received_text
+    sc = types.LiveServerContent(turn_complete=True)
+    asyncio.run(s._handle_content(sc))  # turn boundary → flush
+    assert received_text == ["Saya asisten memora."], received_text
+    assert s._out_buf == "", "buffer not reset after flush"
+    print("live_session self-check OK: output_transcription fragments accumulated → flush at turn")
+
     # --- Phase 7: reconnect loop ---
     async def _check_reconnect() -> None:
+        import contextlib
         import time
 
-        # fake client whose live.connect returns a stable session, so a retry restores it
+        # fake client whose live.connect returns an async cm yielding a stable session,
+        # so a retry restores it (matches the real google-genai connect() contract).
+
         class _FakeAsyncLive:
             def __init__(self):
                 self.calls = 0
@@ -344,9 +423,10 @@ def _self_check() -> None:  # pragma: no cover
 
                     return _gen()
 
+            @contextlib.asynccontextmanager
             async def connect(self, *, model, config):
                 self.calls += 1
-                return self._StableSession()
+                yield self._StableSession()
 
         class _FakeClient:
             class aio:

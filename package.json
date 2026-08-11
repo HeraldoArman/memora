@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "nx run-many -t dev",
+    "dev": "nx run-many -t dev --projects=dashboard,backend,backend-worker",
     "build": "nx run-many -t build",
     "install:py": "nx run-many -t install",
     "dev:backend": "nx run-many -t dev --projects=backend",

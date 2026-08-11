@@ -30,14 +30,16 @@ class SpeechForwarder:
         from google.genai import types
 
         async for frame in self.audio_stream:
-            blob = types.Blob(mime_type=AUDIO_MIME, data=bytes(frame.data))
+            audio_frame = frame.frame if hasattr(frame, "frame") else frame
+            blob = types.Blob(mime_type=AUDIO_MIME, data=bytes(audio_frame.data))
             await self.live_session.send_realtime_input(audio=blob)
 
     async def forward(self, frame) -> None:
         """Forward a single AudioFrame to Gemini Live (manual feeding)."""
         from google.genai import types
 
-        blob = types.Blob(mime_type=AUDIO_MIME, data=bytes(frame.data))
+        audio_frame = frame.frame if hasattr(frame, "frame") else frame
+        blob = types.Blob(mime_type=AUDIO_MIME, data=bytes(audio_frame.data))
         await self.live_session.send_realtime_input(audio=blob)
 
 
