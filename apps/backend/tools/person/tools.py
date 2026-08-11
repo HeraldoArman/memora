@@ -99,8 +99,9 @@ async def register_face(args: dict, ctx: ToolContext) -> dict:
         async with get_sessionmaker()() as db:
             await FaceEmbeddingRepo().save(db, person_id=person_id, embedding=emb)
     except Exception:  # noqa: BLE001 — DB unavailable shouldn't block enrollment
-        log.warning("face embedding persist to DB failed for %s", person_id)
-    return {"person_id": person_id, "enrolled": True, "face_index_row": row}
+        log.exception("face embedding persist to DB failed for %s", person_id)
+        return {"person_id": person_id, "enrolled": True, "face_index_row": row, "persisted": False}
+    return {"person_id": person_id, "enrolled": True, "face_index_row": row, "persisted": True}
 
 
 async def update_person(args: dict, ctx: ToolContext) -> dict:
