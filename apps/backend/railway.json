@@ -5,6 +5,7 @@
     "dockerfilePath": "apps/backend/Dockerfile"
   },
   "deploy": {
-    "startCommand": "uvicorn app:app --host 0.0.0.0 --port 8000 --app-dir apps/backend"
+    "startCommand": "uvicorn app:app --host 0.0.0.0 --port 8000 --app-dir apps/backend",
+    "preDeployCommand": []
   }
 }
