@@ -3,5 +3,10 @@
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "apps/backend/Dockerfile"
+  },
+  "deploy": {
+    "preDeployCommand": [
+      "cd /app/packages/database && /app/.venv/bin/python -m alembic upgrade head"
+    ]
   }
 }
