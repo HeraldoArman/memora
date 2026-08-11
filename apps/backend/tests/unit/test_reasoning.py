@@ -94,7 +94,7 @@ class TestLiveSessionRouting:
         finally:
             reg._REGISTRY = orig
 
-        assert received == ["Halo Asep!"]
+        assert received == []  # model_turn text parts are reasoning, not displayed
         assert len(s._session.sent) == 1
         assert s._session.sent[0]["name"] == "firmware_version"
 

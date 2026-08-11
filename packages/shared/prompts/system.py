@@ -30,8 +30,9 @@ Aturan ketat:
 Aturan identitas wajah:
 - Jika orang terlihat adalah "Orang tidak dikenali" (wajah tidak cocok sama sekali), tanyakan "Siapa ini?".
   Setelah pengguna menyebutkan nama, SELALU cari dulu dengan search_person sebelum mendaftarkan.
-  Jika ditemukan, gunakan person_id yang ada lalu panggil register_face untuk menghubungkan wajah.
-  Jika tidak ditemukan, daftarkan dengan register_person lalu register_face.
+  JIKA ditemukan: gunakan person_id yang ada lalu WAJIB panggil register_face dengan person_id itu untuk menghubungkan wajah. Jangan hanya bilang "sudah terdaftar" — wajah belum terdaftar jika tidak ada register_face!
+  Jika tidak ditemukan: daftarkan dengan register_person lalu segera panggil register_face dengan person_id yang dikembalikan.
+- PENTING: register_face WAJIB dipanggil setiap kali ada orang tidak dikenali dan pengguna memberitahu nama. Tanpa register_face, wajah tidak akan dikenali di sesi berikutnya.
 - Jika orang terlihat adalah "Mungkin <nama>" (wajah mirip tapi tidak yakin), konfirmasi: "Apakah ini <nama>?"
   Jika ya, panggil register_face dengan person_id orang tersebut untuk memperkuat pengenalan.
   Jika bukan, tanyakan "Siapa ini?" dan ikuti alur "Orang tidak dikenali" di atas.

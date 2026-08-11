@@ -69,6 +69,11 @@ class GeminiLiveSession:
         self._max_backoff_s = 5.0
         # ponytail: pending prompts queued during reconnect; flushed on successful _open()
         self._pending_prompts: list[str] = []
+        # ponytail: recent conversation turns for context re-injection on reconnect.
+        # Gemini Live 1011 errors drop the WS and lose conversation context; re-injecting
+        # the last few turns as a text prompt after reconnect lets the model pick up.
+        self._recent_turns: list[str] = []
+        self._MAX_TURNS = 6
         # output transcription arrives in fragments (finished=None) across a turn; we
         # accumulate them and flush the full sentence to on_text (OLED) at turn boundary,
         # so the display shows one coherent line instead of flickering per-fragment.
@@ -138,6 +143,12 @@ class GeminiLiveSession:
                 await self._session.send_realtime_input(text=p)
             log.info("flushed %d pending prompt(s)", len(self._pending_prompts))
             self._pending_prompts.clear()
+        # ponytail: re-inject recent conversation turns so the model doesn't lose context
+        # after a 1011 reconnect. Sent as a single text block before any new input.
+        if self._recent_turns:
+            summary = "Riwayat percakapan sebelumnya:\n" + "\n".join(self._recent_turns)
+            await self._session.send_realtime_input(text=summary)
+            log.info("re-injected %d recent turn(s) after reconnect", len(self._recent_turns))
 
     def start_receive(self) -> asyncio.Task:
         """Spawn the receive loop as a background task."""
@@ -230,13 +241,14 @@ class GeminiLiveSession:
                 log.info(
                     "output_transcription fragment: %r (buf=%d)", t.text[:120], len(self._out_buf)
                 )
-        # model turn parts: text → display (legacy TEXT-modality path), audio → speaker.
+        # model turn parts: text parts are internal reasoning traces (the **Identifying...**
+        # narration) — log them but DON'T send to display. Only output_transcription (the
+        # spoken response) goes to on_text. Audio parts → speaker.
         turn = sc.model_turn
         if turn is not None:
             for part in turn.parts or []:
-                if part.text and self._on_text is not None:
-                    log.info("model_turn text part: %r", part.text[:120])
-                    await self._on_text(part.text)
+                if part.text:
+                    log.info("model reasoning (not displayed): %r", part.text[:120])
                 # audio is handled by the agent/speaker wiring via an audio sink set
                 # at connect; the blob flows through _handle_audio.
                 if part.inline_data:
@@ -253,6 +265,8 @@ class GeminiLiveSession:
             if self._out_buf and self._on_text is not None:
                 log.info("flush → on_text len=%d text=%r", len(self._out_buf), self._out_buf[:120])
                 await self._on_text(self._out_buf)
+                self._recent_turns.append(f"Asisten: {self._out_buf}")
+                self._recent_turns = self._recent_turns[-self._MAX_TURNS :]
             self._out_buf = ""
             await self._on_turn_complete()
 
@@ -310,6 +324,8 @@ class GeminiLiveSession:
         """Push a text instruction to the live session (proactive planner trigger)."""
         if not text:
             return
+        self._recent_turns.append(f"Pengguna: {text}")
+        self._recent_turns = self._recent_turns[-self._MAX_TURNS :]
         if self._session is None:
             self._pending_prompts.append(text)
             log.info("prompt queued (reconnecting): %r", text[:80])
@@ -395,10 +411,10 @@ def _self_check() -> None:  # pragma: no cover
     finally:
         reg._REGISTRY = orig
 
-    assert received_text == ["Halo Asep!"]
+    assert received_text == []  # model_turn text is reasoning, not displayed
     assert len(s._session.sent) == 1  # type: ignore[attr-defined]
     assert s._session.sent[0]["name"] == "firmware_version"  # type: ignore[attr-defined]
-    print("live_session self-check OK: text→on_text, tool_call→send_tool_response")
+    print("live_session self-check OK: text reasoning not displayed, tool_call→send_tool_response")
 
     # --- transcription is_final routing: input=final, interim=partial ---
     sc = types.LiveServerContent(

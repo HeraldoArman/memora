@@ -68,10 +68,11 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
     video_stream = rtc.VideoStream(track)
     sampler = FrameSampler(video_stream)
     recognizer = FaceRecognizer()
-    # ponytail: scene understanding every 2s for near-realtime. Response objects
-    # are explicitly cleared in understander.py after parse to prevent leak.
+    # ponytail: scene understanding disabled — Gemini Vision client leaks memory
+    # (~100MB/min at 2s interval). The native-audio model gets visual context via
+    # tool calls (visible_people, current_scene). Re-enable when leak is fixed.
     _scene_counter = 0
-    _SCENE_INTERVAL = 2
+    _SCENE_INTERVAL = 999999
 
     async def _video_loop() -> None:
         nonlocal _scene_counter
