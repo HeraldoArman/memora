@@ -79,7 +79,10 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
                 frame_count += 1
                 try:
                     bgr = frame["bgr"]
-                    faces = recognizer.detect_and_embed(bgr)
+                    # run face detection in a thread so it doesn't block the
+                    # event loop (ONNX CPU inference takes 1-2s; blocking
+                    # prevents Gemini connect task + receive loop from running)
+                    faces = await asyncio.to_thread(recognizer.detect_and_embed, bgr)
                     log.info(
                         "frame: %dx%d faces=%d",
                         bgr.shape[1],
@@ -90,9 +93,7 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
                         f = faces[0]
                         await _update_last_face(f, session)
                     del bgr, faces
-                    # ponytail: gc.collect every 10 frames — InsightFace ONNX runtime
-                    # fragments memory on CPU; periodic collection slows the leak.
-                    if frame_count % 10 == 0:
+                    if frame_count % 5 == 0:
                         gc.collect()
                 except Exception:  # noqa: BLE001 — perception errors must not kill the loop
                     log.exception("face recognize failed")
