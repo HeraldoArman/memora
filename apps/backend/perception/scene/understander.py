@@ -54,7 +54,9 @@ class SceneUnderstander:
                     response_schema=SCENE_SCHEMA,
                 ),
             )
-            return _parse(resp)
+            result = _parse(resp)
+            del resp
+            return result
         except Exception as e:  # noqa: BLE001
             log.warning("scene understanding failed: %s", e)
             return None

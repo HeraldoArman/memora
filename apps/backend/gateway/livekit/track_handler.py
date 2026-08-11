@@ -68,10 +68,10 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
     video_stream = rtc.VideoStream(track)
     sampler = FrameSampler(video_stream)
     recognizer = FaceRecognizer()
-    # ponytail: scene understanding every 30s (30 frames at 1 FPS) — Gemini Vision
-    # API calls every 5s caused steady memory growth (response objects + HTTP session).
+    # ponytail: scene understanding every 2s for near-realtime. Response objects
+    # are explicitly cleared in understander.py after parse to prevent leak.
     _scene_counter = 0
-    _SCENE_INTERVAL = 30
+    _SCENE_INTERVAL = 2
 
     async def _video_loop() -> None:
         nonlocal _scene_counter
