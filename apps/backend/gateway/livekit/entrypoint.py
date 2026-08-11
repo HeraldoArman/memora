@@ -3,16 +3,13 @@
 Registered via AgentServer.rtc_session(entrypoint, agent_name=...) in workers/livekit_worker.py.
 The framework calls entrypoint(ctx: JobContext) when a room is assigned. We:
   1. ctx.connect(auto_subscribe=True) — join the room, auto-subscribe to participant tracks.
-  2. Build a RoomSession (agent + perception + working memory).
-  3. Start the session (observation engine + reasoning agent connect to Gemini Live).
+  2. Build a RoomSession (agent + face repo + tool context).
+  3. Start the session (reasoning agent connects to Gemini Live).
   4. Wire @room.on("track_subscribed") → track_handler (spawn video + audio loops).
-  5. Wire @room.on("data_received") → data_channel (device telemetry in).
-  6. On job end / participant disconnect → stop the session (cancels loops, closes Gemini).
+  5. Wire @room.on("data_received") → prompt handler.
+  6. On job end / participant disconnect → stop the session.
 
-Ponytail: one entrypoint function. No reconnection logic here — livekit-agents handles
-job re-dispatch; Phase 7 adds graceful Gemini reconnect within a room.
-
-No multi-user: one room = one implicit device = one RoomSession.
+refactor/bare-minimum: no observation engine, no data_channel telemetry, no working memory.
 """
 
 from __future__ import annotations
@@ -23,7 +20,6 @@ import logging
 from livekit import rtc
 from livekit.agents import JobContext
 
-from gateway.livekit.data_channel import handle_data_received
 from gateway.livekit.track_handler import handle_audio_track, handle_video_track
 from gateway.session import RoomSession
 
@@ -96,8 +92,9 @@ async def entrypoint(ctx: JobContext) -> None:
             text = data.decode("utf-8", errors="replace")
             log.info("prompt received: %r — feeding to gemini", text)
             asyncio.create_task(session.agent.feed_prompt(text))
-        else:
-            asyncio.create_task(handle_data_received(data, topic, session.observation_engine))
+        elif topic == "device":
+            log.debug("device telemetry: %r", data[:200])
+        # other topics ignored in bare-minimum
 
     # explicitly subscribe to any tracks from participants already in the room
     for p in room.remote_participants.values():

@@ -39,8 +39,7 @@ Aturan identitas wajah:
 - SELALU panggil search_person sebelum register_person untuk menghindari duplikat.
 - Setelah register_person, segera panggil register_face dengan person_id yang dikembalikan agar wajah terhubung.
 
-Konteks saat ini (diperbarui via alat):
-{{context_package}}
+Konteks saat ini diperbarui via alat (visible_people, current_scene, dll.). Panggil alat tersebut untuk mendapatkan informasi terkini.
 """
 
 EXTRACTION_PROMPT = """\

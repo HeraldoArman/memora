@@ -22,8 +22,6 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from dto.observations import FaceObservation
-
 log = logging.getLogger(__name__)
 
 
@@ -56,7 +54,10 @@ class _AudioShim:
 
 
 async def handle_video_track(track, room, session) -> asyncio.Task:
-    """Spawn the video loop: sample frames → face identity + Gemini video.
+    """Spawn the video loop: sample frames → face identity.
+
+    refactor/bare-minimum: writes face result directly to tool_ctx.last_face instead
+    of going through ObservationEngine → WorkingMemory → sync_context.
 
     Returns the background task (caller stores it for cleanup).
     """
@@ -73,7 +74,6 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
         log.info("video loop started")
         try:
             async for frame in sampler.frames():
-                # face identity path (deterministic; Gemini can't match a gallery)
                 try:
                     bgr = frame["bgr"]
                     faces = recognizer.detect_and_embed(bgr)
@@ -85,23 +85,10 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
                     )
                     if faces:
                         f = faces[0]
-                        obs = await _lookup_face(f.embedding, session.face_repo)
-                        if obs is not None:
-                            if not obs.is_known:
-                                session.tool_ctx.cache_unknown_embedding(obs.embedding)
-                            await session.observation_engine.emit(obs)
-                        del f, obs
+                        await _update_last_face(f, session)
                     del bgr, faces
                 except Exception:  # noqa: BLE001 — perception errors must not kill the loop
                     log.exception("face recognize failed")
-
-                # ponytail: scene understanding disabled — Gemini Vision client leaks memory.
-                # The native-audio model gets visual context via tool calls (visible_people,
-                # current_scene). No feed_video either — sending raw JPEGs to
-                # send_realtime_input(video=...) caused ~66MB/s memory growth.
-
-                # sync tool context so tools see fresh CurrentContext
-                session.sync_context()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -111,22 +98,14 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
     return task
 
 
-async def _lookup_face(embedding, face_repo) -> FaceObservation | None:
-    """Identify an embedding via the session's face repo; return a FaceObservation.
-
-    `face_repo` is the RoomSession's FaceRepository (built at session create — the worker
-    process doesn't run the FastAPI lifespan). None repo → no identity path (keeps the
-    video loop alive if face infra isn't wired). FaceRepository is sync (faiss-cpu search
-    is in-process); we keep the function async so callers can `await` uniformly.
-    """
+async def _update_last_face(detected, session) -> None:
+    """Look up face embedding → write result directly to tool_ctx.last_face."""
     try:
+        face_repo = session.face_repo
         if face_repo is None:
             log.debug("face repo not available; skipping identity lookup")
-            return None
-        result = face_repo.lookup(embedding)  # sync: faiss search is in-process
-        # Resolve person_id → name via the graph so fuse() can surface the person in
-        # CurrentContext.visible_people (it only adds known+named observations). Graph
-        # outage must NOT drop the observation — degrade to name=None and still emit.
+            return
+        result = face_repo.lookup(detected.embedding)
         name = None
         if result.person_id and (result.is_known or result.is_possible):
             try:
@@ -137,6 +116,7 @@ async def _lookup_face(embedding, face_repo) -> FaceObservation | None:
                     name = profile.get("name")
             except Exception:  # noqa: BLE001
                 log.warning("face name lookup failed for %s; keeping name=None", result.person_id)
+
         if result.person_id is None:
             log.info(
                 "face lookup: unknown score=%.3f (threshold known=%.2f possible=%.2f)",
@@ -153,17 +133,20 @@ async def _lookup_face(embedding, face_repo) -> FaceObservation | None:
                 result.is_known,
                 result.is_possible,
             )
-        return FaceObservation(
-            person_id=result.person_id,
-            name=name,
-            confidence=float(result.score),
-            is_known=result.is_known,
-            is_possible_match=result.is_possible,
-            embedding=embedding,
-        )
+
+        # Write directly to tool_ctx — no observation engine, no working memory
+        session.tool_ctx.last_face = {
+            "embedding": detected.embedding,
+            "person_id": result.person_id,
+            "name": name,
+            "score": float(result.score),
+            "is_known": result.is_known,
+            "is_possible": result.is_possible,
+        }
+        if not result.is_known:
+            session.tool_ctx.cache_unknown_embedding(detected.embedding)
     except Exception:  # noqa: BLE001
         log.exception("face lookup failed")
-        return None
 
 
 async def handle_audio_track(track, room, session) -> asyncio.Task:

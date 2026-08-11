@@ -14,7 +14,6 @@ import numpy as np
 import pytest
 
 from constants import ToolName
-from dto.observations import CurrentContext, DeviceObservation, FaceObservation
 from reasoning.tools.router import _resp, dispatch_tool_call
 from tools import ToolContext, get_tool
 
@@ -48,40 +47,49 @@ def _ctx(**overrides) -> ToolContext:
     return ctx
 
 
-def _ctx_with_context(*observations) -> ToolContext:
+def _ctx_with_face(**face_fields) -> ToolContext:
+    """ToolContext with last_face set (bare-minimum: replaces current_context)."""
     ctx = _ctx()
-    ctx.current_context = CurrentContext(observations=list(observations))
+    if face_fields:
+        ctx.last_face = face_fields
     return ctx
 
 
 def _face_ctx() -> ToolContext:
     emb = np.zeros(512, dtype=np.float32)
-    return _ctx_with_context(FaceObservation(embedding=emb))
+    return _ctx_with_face(embedding=emb)
 
 
 class TestObservationTools:
-    async def test_current_scene_happy(self) -> None:
-        ctx = _ctx()
-        ctx.current_context = CurrentContext(scene="apotek", activity="beli obat", confidence=0.9)
-        assert await obs.current_scene({}, ctx) == {
-            "location": "apotek",
-            "activity": "beli obat",
-            "confidence": 0.9,
+    async def test_current_scene_unavailable(self) -> None:
+        # bare-minimum: no scene understander → always unavailable
+        assert await obs.current_scene({}, _ctx()) == {
+            "available": False,
+            "location": None,
+            "activity": None,
         }
 
-    async def test_current_scene_none(self) -> None:
-        assert await obs.current_scene({}, _ctx()) == {"available": False}
-
-    async def test_visible_people(self) -> None:
-        ctx = _ctx()
-        ctx.current_context = CurrentContext(visible_people=["Asep"])
+    async def test_visible_people_known(self) -> None:
+        ctx = _ctx_with_face(is_known=True, name="Asep")
         assert await obs.visible_people({}, ctx) == {"available": True, "people": ["Asep"]}
+
+    async def test_visible_people_unknown(self) -> None:
+        ctx = _ctx_with_face(is_known=False, is_possible=False, name=None)
+        assert await obs.visible_people({}, ctx) == {
+            "available": True,
+            "people": ["Orang tidak dikenali"],
+        }
+
+    async def test_visible_people_none(self) -> None:
         assert await obs.visible_people({}, _ctx()) == {"available": False, "people": []}
 
-    async def test_current_activity(self) -> None:
-        ctx = _ctx()
-        ctx.current_context = CurrentContext(activity="makan", scene="rumah")
-        assert await obs.current_activity({}, ctx) == {"activity": "makan", "location": "rumah"}
+    async def test_current_activity_unavailable(self) -> None:
+        # bare-minimum: no scene understander
+        assert await obs.current_activity({}, _ctx()) == {
+            "available": False,
+            "activity": None,
+            "location": None,
+        }
 
     async def test_conversation_summary(self) -> None:
         ctx = _ctx()
@@ -380,26 +388,15 @@ class _BoomRetriever:
 
 
 class TestSystemTools:
-    def _dev_ctx(self) -> ToolContext:
-        return _ctx_with_context(DeviceObservation(battery_level=80, wifi_connected=True))
-
+    # bare-minimum: device telemetry unavailable (no observation engine)
     async def test_battery_status(self) -> None:
         assert await sys_tools.battery_status({}, _ctx()) == {"available": False}
-        assert await sys_tools.battery_status({}, self._dev_ctx()) == {
-            "battery_level": 80,
-            "available": True,
-        }
 
     async def test_network_status(self) -> None:
         assert await sys_tools.network_status({}, _ctx()) == {"available": False}
-        assert await sys_tools.network_status({}, self._dev_ctx()) == {
-            "wifi_connected": True,
-            "available": True,
-        }
 
     async def test_device_information(self) -> None:
-        out = await sys_tools.device_information({}, self._dev_ctx())
-        assert out["device"]["battery_level"] == 80
+        out = await sys_tools.device_information({}, _ctx())
         assert "firmware" in out
 
     async def test_firmware_version(self) -> None:
@@ -421,58 +418,52 @@ class TestToolContext:
     def test_current_face_embedding(self) -> None:
         assert _ctx().current_face_embedding() is None
         emb = np.ones(512, dtype=np.float32)
-        ctx = _ctx_with_context(FaceObservation(embedding=emb))
+        ctx = _ctx_with_face(embedding=emb)
         assert ctx.current_face_embedding() is emb
 
     def test_unknown_embedding_cached(self) -> None:
         """Unknown face embedding is cached so register_face works after person leaves."""
         emb = np.ones(512, dtype=np.float32)
-        ctx = _ctx_with_context(FaceObservation(embedding=emb, is_known=False))
+        ctx = _ctx_with_face(embedding=emb, is_known=False)
         assert ctx.current_face_embedding() is emb
-        # Person leaves frame — context cleared
-        ctx.current_context = None
+        # Person leaves frame — last_face cleared
+        ctx.last_face = None
         # Cache should still serve the embedding
         assert ctx.current_face_embedding() is emb
 
     def test_cached_embedding_expires(self) -> None:
         """Cached unknown embedding expires after TTL."""
         emb = np.ones(512, dtype=np.float32)
-        ctx = _ctx_with_context(FaceObservation(embedding=emb, is_known=False))
+        ctx = _ctx_with_face(embedding=emb, is_known=False)
         ctx.current_face_embedding()  # populate cache
         # Expire the deadline
         ctx._unknown_embedding_deadline = 0.0
-        ctx.current_context = None
+        ctx.last_face = None
         assert ctx.current_face_embedding() is None
 
     def test_known_face_not_cached_as_unknown(self) -> None:
         """A known face should not populate the unknown cache."""
         emb = np.ones(512, dtype=np.float32)
-        ctx = _ctx_with_context(
-            FaceObservation(embedding=emb, is_known=True, person_id="p1", name="Asep")
-        )
+        ctx = _ctx_with_face(embedding=emb, is_known=True, person_id="p1", name="Asep")
         ctx.current_face_embedding()  # known — should NOT cache
         assert ctx._last_unknown_embedding is None
-        ctx.current_context = None
+        ctx.last_face = None
         assert ctx.current_face_embedding() is None  # no fallback
 
     def test_cache_refreshed_on_new_unknown(self) -> None:
         """A second unknown face refreshes the cache with the latest embedding."""
         emb1 = np.ones(512, dtype=np.float32)
         emb2 = np.zeros(512, dtype=np.float32)
-        ctx = _ctx_with_context(FaceObservation(embedding=emb1, is_known=False))
+        ctx = _ctx_with_face(embedding=emb1, is_known=False)
         ctx.current_face_embedding()
-        ctx.current_context = CurrentContext(
-            observations=[FaceObservation(embedding=emb2, is_known=False)]
-        )
+        ctx.last_face = {"embedding": emb2, "is_known": False}
         assert ctx.current_face_embedding() is emb2  # latest wins
-        ctx.current_context = None
+        ctx.last_face = None
         assert ctx.current_face_embedding() is emb2  # cache holds latest
 
     def test_device_snapshot(self) -> None:
+        # bare-minimum: no device telemetry
         assert _ctx().device_snapshot() == {}
-        ctx = _ctx_with_context(DeviceObservation(battery_level=55, wifi_connected=False))
-        snap = ctx.device_snapshot()
-        assert snap == {"battery_level": 55, "wifi_connected": False, "button_pressed": False}
 
 
 class TestRegistry:

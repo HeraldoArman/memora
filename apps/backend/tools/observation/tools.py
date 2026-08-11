@@ -1,8 +1,8 @@
-"""Observation tools — expose the current Working Memory snapshot to the agent.
+"""Observation tools — expose live perception state to the agent.
 
-These return the live CurrentContext fields. The agent calls current_scene / visible_people
-etc. to get fresh perception data (dynamic context via tool-call results, not the system
-prompt — arch decision #2).
+refactor/bare-minimum: reads from ToolContext.last_face directly instead of
+CurrentContext from WorkingMemory/ObservationEngine. Re-enable the observation
+pipeline by switching back to current_context.
 """
 
 from __future__ import annotations
@@ -10,39 +10,25 @@ from __future__ import annotations
 from tools.registry import ToolContext
 
 
-def _ctx(ctx: ToolContext) -> dict:
-    c = ctx.current_context
-    if c is None:
-        return {"available": False, "note": "no current observation context"}
-    return {
-        "available": True,
-        "scene": c.scene,
-        "activity": c.activity,
-        "visible_people": c.visible_people,
-        "device": c.device,
-        "speech": getattr(c, "speech", None),
-    }
-
-
 async def current_scene(args: dict, ctx: ToolContext) -> dict:
-    c = ctx.current_context
-    if c is None:
-        return {"available": False}
-    return {"location": c.scene, "activity": c.activity, "confidence": c.confidence}
+    # bare-minimum: no scene understander — return unavailable
+    return {"available": False, "location": None, "activity": None}
 
 
 async def visible_people(args: dict, ctx: ToolContext) -> dict:
-    c = ctx.current_context
-    if c is None:
+    lf = ctx.last_face
+    if lf is None:
         return {"available": False, "people": []}
-    return {"available": True, "people": c.visible_people}
+    if lf.get("is_known") and lf.get("name"):
+        return {"available": True, "people": [lf["name"]]}
+    if lf.get("is_possible") and lf.get("name"):
+        return {"available": True, "people": [f"Mungkin {lf['name']}"]}
+    return {"available": True, "people": ["Orang tidak dikenali"]}
 
 
 async def current_activity(args: dict, ctx: ToolContext) -> dict:
-    c = ctx.current_context
-    if c is None:
-        return {"available": False}
-    return {"activity": c.activity, "location": c.scene}
+    # bare-minimum: no scene understander
+    return {"available": False, "activity": None, "location": None}
 
 
 async def conversation_summary(args: dict, ctx: ToolContext) -> dict:

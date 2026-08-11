@@ -1,40 +1,27 @@
 """System instruction builder for the Gemini Live connection.
 
-The base SYSTEM_INSTRUCTION (packages.shared.prompts.system) is immutable for the
-connection lifetime (arch decision #2). At connect time we inject the initial context
-package text into the {{context_package}} placeholder. Dynamic context thereafter
-flows via tool-call results (agent calls current_scene/search_memory → fresh data),
-NOT via the system prompt — so this is the only place the placeholder is filled.
-
-Ponytail: a pure string-format function. No templating engine; the placeholder is a
-literal {{context_package}} we str.replace.
+refactor/bare-minimum: the system prompt is static (no {{context_package}} placeholder).
+context_text is accepted for API compatibility but ignored. Re-enable the placeholder
+by adding {{context_package}} back to SYSTEM_INSTRUCTION and restoring the replace logic.
 """
 
 from __future__ import annotations
 
 from prompts import SYSTEM_INSTRUCTION
 
-_PLACEHOLDER = "{{context_package}}"
-
 
 def build_system_instruction(context_text: str = "") -> str:
-    """Inject the initial context package text into the system instruction.
-
-    `context_text` is the rendered Bahasa text from context.to_text(pkg, activity=...).
-    Empty string is valid — the agent will fetch context via tools on first turn.
-    """
-    return SYSTEM_INSTRUCTION.replace(_PLACEHOLDER, context_text or "(belum ada konteks)")
+    """Return the system instruction. context_text is ignored in bare-minimum."""
+    return SYSTEM_INSTRUCTION
 
 
-# --- self-check: placeholder replaced, idempotent, empty handled ---
+# --- self-check: returns the static system instruction ---
 def _self_check() -> None:  # pragma: no cover
     base = build_system_instruction("")
-    assert _PLACEHOLDER not in base
-    assert "(belum ada konteks)" in base
     filled = build_system_instruction("Orang: Asep. Lokasi: apotek.")
-    assert "Asep" in filled and "apotek" in filled
-    assert _PLACEHOLDER not in filled
-    print("system prompt self-check OK: placeholder replaced, empty handled")
+    assert base == filled, "bare-minimum: context_text is ignored"
+    assert "Memora" in base
+    print("system prompt self-check OK: static instruction returned")
 
 
 if __name__ == "__main__":  # pragma: no cover

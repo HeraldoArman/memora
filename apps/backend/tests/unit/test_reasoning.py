@@ -1,5 +1,7 @@
 """Unit tests — reasoning: GeminiLiveSession message routing + reconnect, ReasoningAgent
-wiring, Speaker frame math, Display publish, system-prompt placeholder.
+wiring, Speaker frame math, Display publish, system-prompt.
+
+refactor/bare-minimum: no ContextEngine, no planner, no on_extract, no emit_observation.
 
 No live connection: sessions are stubbed; the agent's collaborators are MagicMocks.
 """
@@ -12,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 from google.genai import live, types
 
-from dto.observations import CurrentContext, SpeechObservation
 from reasoning.agent.agent import ReasoningAgent
 from reasoning.prompts.system import build_system_instruction
 from reasoning.response.display import _MAX_PAYLOAD, Display
@@ -28,15 +29,12 @@ def _session_with_ctx(ctx: ToolContext | None = None) -> GeminiLiveSession:
 
 
 class TestSystemPrompt:
-    def test_placeholder_replaced(self) -> None:
+    def test_static_instruction(self) -> None:
+        # bare-minimum: context_text is ignored, system prompt is static
         filled = build_system_instruction("Orang: Asep. Lokasi: apotek.")
-        assert "{{context_package}}" not in filled
-        assert "Asep" in filled and "apotek" in filled
-
-    def test_empty_gets_default(self) -> None:
         base = build_system_instruction("")
-        assert "{{context_package}}" not in base
-        assert "(belum ada konteks)" in base
+        assert filled == base
+        assert "{{context_package}}" not in filled
 
     def test_contains_face_identity_rules(self) -> None:
         """System prompt must instruct the agent on face-name linking."""
@@ -246,11 +244,10 @@ class TestReasoningAgent:
         session.aclose = AsyncMock()
         session.send_video = AsyncMock()
         session.send_audio = AsyncMock()
+        session.send_text = AsyncMock()
         session.start_receive = MagicMock()
         session.set_audio_sink = MagicMock()
         session.set_turn_complete_callback = MagicMock()
-        engine = MagicMock()
-        engine.build = AsyncMock(return_value=(MagicMock(), "ctx text"))
         speaker = MagicMock()
         speaker.publish = MagicMock()
         speaker.aclose = AsyncMock()
@@ -259,7 +256,6 @@ class TestReasoningAgent:
         agent = ReasoningAgent(
             room=MagicMock(),
             tool_ctx=ToolContext(),
-            engine=engine,
             session=session,
             speaker=speaker,
             display=display,
@@ -269,7 +265,6 @@ class TestReasoningAgent:
     async def test_start_wires_everything(self) -> None:
         agent = self._agent()
         await agent.start(current=None)
-        agent.engine.build.assert_awaited_once()
         agent.session.set_audio_sink.assert_called_once_with(agent.speaker.feed)
         agent.session.set_turn_complete_callback.assert_called_once()
         agent.session.connect.assert_awaited_once()
@@ -277,63 +272,26 @@ class TestReasoningAgent:
         agent.session.start_receive.assert_called_once()
         assert agent._connected
 
-    async def test_on_turn_calls_extract(self) -> None:
+    async def test_on_turn_is_noop(self) -> None:
+        # bare-minimum: _on_turn is a no-op (no extraction)
         agent = self._agent()
-        calls: list[str] = []
-        agent.on_extract = lambda t: calls.append(t)
-        agent.ctx.current_context = CurrentContext(speech="apa ini?")
-        await agent._on_turn()
-        assert calls == ["apa ini?"]
-
-    async def test_on_turn_no_speech_no_extract(self) -> None:
-        agent = self._agent()
-        called = False
-
-        async def _extract(t):
-            nonlocal called
-            called = True
-
-        agent.on_extract = _extract
-        await agent._on_turn()
-        assert not called
-
-    async def test_on_turn_extract_failure_caught(self) -> None:
-        agent = self._agent()
-
-        async def _boom(t):
-            raise RuntimeError("db down")
-
-        agent.on_extract = _boom
-        agent.ctx.current_context = CurrentContext(speech="x")
         await agent._on_turn()  # must not raise
 
-    async def test_on_transcription_final_emits(self) -> None:
-        emitted: list[object] = []
-
-        async def _emit(obs):
-            emitted.append(obs)
-
+    async def test_on_transcription_logs_only(self) -> None:
+        # bare-minimum: _on_transcription just logs, no observation emit
         agent = self._agent()
-        agent.emit_observation = _emit
         await agent._on_transcription("apa ini?", is_final=True)
-        await agent._on_transcription("apa in", is_final=False)  # interim skipped
-        await agent._on_transcription("   ", is_final=True)  # empty skipped
-        assert len(emitted) == 1
-        assert isinstance(emitted[0], SpeechObservation)
-        assert emitted[0].transcript == "apa ini?"
+        await agent._on_transcription("apa in", is_final=False)  # must not raise
 
     async def test_feed_delegates(self) -> None:
         agent = self._agent()
-        await agent.feed_video(b"jpeg")
-        agent.session.send_video.assert_awaited_once_with(b"jpeg")
         await agent.feed_audio(b"\x00", sample_rate=16000)
         agent.session.send_audio.assert_awaited_once_with(b"\x00", sample_rate=16000)
 
-    async def test_update_context_refreshes(self) -> None:
+    async def test_feed_prompt_delegates(self) -> None:
         agent = self._agent()
-        ctx = CurrentContext(scene="apotek")
-        await agent.update_context(ctx)
-        assert agent.ctx.current_context is ctx
+        await agent.feed_prompt("halo")
+        agent.session.send_text.assert_awaited_once_with("halo")
 
     async def test_stop_closes_session_and_speaker(self) -> None:
         agent = self._agent()
@@ -342,64 +300,6 @@ class TestReasoningAgent:
         agent.session.aclose.assert_awaited_once()
         agent.speaker.aclose.assert_awaited_once()
         assert not agent._connected
-
-
-class TestAgentProactive:
-    def _agent_with_planner(self) -> ReasoningAgent:
-        session = MagicMock()
-        session.connect = AsyncMock()
-        session.aclose = AsyncMock()
-        session.send_text = AsyncMock()
-        session.start_receive = MagicMock()
-        session.set_audio_sink = MagicMock()
-        session.set_turn_complete_callback = MagicMock()
-        engine = MagicMock()
-        engine.build = AsyncMock(return_value=(MagicMock(), "ctx text"))
-        speaker = MagicMock()
-        speaker.publish = MagicMock()
-        speaker.aclose = AsyncMock()
-        display = MagicMock()
-        display.show = AsyncMock()
-        planner = MagicMock()
-        planner.start = MagicMock()
-        planner.stop = AsyncMock()
-        agent = ReasoningAgent(
-            room=MagicMock(),
-            tool_ctx=ToolContext(),
-            engine=engine,
-            session=session,
-            speaker=speaker,
-            display=display,
-            planner=planner,
-        )
-        return agent
-
-    async def test_start_starts_planner(self) -> None:
-        agent = self._agent_with_planner()
-        await agent.start(current=None)
-        agent.planner.start.assert_called_once()
-
-    async def test_stop_stops_planner(self) -> None:
-        agent = self._agent_with_planner()
-        await agent.start(current=None)
-        await agent.stop()
-        agent.planner.stop.assert_awaited_once()
-
-    async def test_on_proactive_sends_text(self) -> None:
-        agent = self._agent_with_planner()
-        await agent._on_proactive("[PROAKTIF] Ingat beli obat")
-        agent.session.send_text.assert_awaited_once_with("[PROAKTIF] Ingat beli obat")
-
-    async def test_on_proactive_failure_caught(self) -> None:
-        agent = self._agent_with_planner()
-        agent.session.send_text = AsyncMock(side_effect=RuntimeError("session down"))
-        await agent._on_proactive("test")  # must not raise
-
-    def test_get_context_returns_current(self) -> None:
-        agent = self._agent_with_planner()
-        ctx = CurrentContext(scene="apotek")
-        agent.ctx.current_context = ctx
-        assert agent._get_context() is ctx
 
 
 class TestSpeaker:
