@@ -1,32 +1,32 @@
 {
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "projectType": "application",
-  "sourceRoot": "apps/firmware/src",
+  "sourceRoot": "apps/firmware/main",
   "tags": ["firmware"],
   "targets": {
     "dev": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pio run -d apps/firmware"
+        "command": "idf.py -C apps/firmware build"
       }
     },
     "build": {
       "executor": "nx:run-commands",
-      "outputs": ["{workspaceRoot}/apps/firmware/.pio/build"],
+      "outputs": ["{workspaceRoot}/apps/firmware/build"],
       "options": {
-        "command": "pio run -d apps/firmware"
+        "command": "idf.py -C apps/firmware build"
       }
     },
     "upload": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pio run -d apps/firmware -t upload"
+        "command": "idf.py -C apps/firmware flash"
       }
     },
     "monitor": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pio device monitor -d apps/firmware"
+        "command": "idf.py -C apps/firmware monitor"
       }
     }
   }
