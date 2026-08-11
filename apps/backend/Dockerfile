@@ -33,7 +33,7 @@ COPY --from=builder --chown=nonroot:nonroot /app /app
 
 # Pre-fetch InsightFace buffalo_l weights (~300MB) so runtime doesn't download
 # on first face detection. InsightFace expects them at {FACE_MODEL_ROOT}/models/buffalo_l/.
-RUN apt-get update && apt-get install -y --no-install-recommends unzip ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends unzip ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /app/models/insightface/models \
     && curl -fsSL -o /tmp/buffalo_l.zip \
