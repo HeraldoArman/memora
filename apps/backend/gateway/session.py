@@ -62,7 +62,6 @@ class RoomSession:
 
         settings = get_settings()
         working_memory = WorkingMemory()
-        tool_ctx = ToolContext()
         # face repo for THIS process — rebuilt from Postgres (durable store) so both
         # backend + worker share face registrations without a shared volume.
         face_repo = await FaceRepository.from_db(
@@ -70,12 +69,21 @@ class RoomSession:
             possible_threshold=settings.face_possible_match_threshold,
             dim=settings.face_embedding_dim,
         )
-        tool_ctx.face_repo = face_repo  # wires PersonService so search_by_face/register_face work
+        # ponytail: pass face_repo to constructor so __post_init__ builds PersonService
+        # with it. Setting .face_repo after __post_init__ leaves person_service.face_repo=None.
+        tool_ctx = ToolContext(face_repo=face_repo)
         tool_ctx.session_id = None  # lazily set by _on_extract when the conversation session starts
         log.info("room session face repo ready: %d embedding(s)", face_repo.size)
 
+        # ponytail: insightface loads ~9s of ONNX models — fire-and-forget in a thread
+        # so the event loop isn't blocked. If the model isn't available yet when the
+        # first video frame arrives, _load_app() runs lazily on that call (same singleton).
+        import asyncio as _aio
+
+        from perception.face.recognizer import preload as preload_face
         from perception.scene.understander import SceneUnderstander
 
+        _aio.get_event_loop().run_in_executor(None, preload_face)
         scene_understander = SceneUnderstander()
 
         from vector.text_index import TextMemoryIndex

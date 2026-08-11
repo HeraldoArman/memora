@@ -61,6 +61,7 @@ class TestRoomSessionCreate:
     async def test_create_wires_collaborators(self, monkeypatch) -> None:
         repo = _patch_face_repo(monkeypatch)
         monkeypatch.setattr("gateway.session.ReasoningAgent", _FakeAgent)
+        monkeypatch.setattr("perception.face.recognizer.preload", lambda: None)
         room = MagicMock()
         session = await RoomSession.create(room)
         assert session.session_id is None  # conversation session is lazy
@@ -74,6 +75,7 @@ class TestRoomSessionCreate:
     async def test_on_extract_lazy_session_and_threading(self, monkeypatch) -> None:
         _patch_face_repo(monkeypatch)
         monkeypatch.setattr("gateway.session.ReasoningAgent", _FakeAgent)
+        monkeypatch.setattr("perception.face.recognizer.preload", lambda: None)
         session = await RoomSession.create(MagicMock())
 
         runs: list[dict] = []
@@ -104,6 +106,7 @@ class TestRoomSessionCreate:
     async def test_on_extract_db_down_does_not_raise(self, monkeypatch) -> None:
         _patch_face_repo(monkeypatch)
         monkeypatch.setattr("gateway.session.ReasoningAgent", _FakeAgent)
+        monkeypatch.setattr("perception.face.recognizer.preload", lambda: None)
         session = await RoomSession.create(MagicMock())
 
         with (

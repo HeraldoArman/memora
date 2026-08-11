@@ -66,6 +66,13 @@ class ToolContext:
         if self.face_repo is not None:
             self.person_service = PersonService(face_repo=self.face_repo)
 
+    def cache_unknown_embedding(self, embedding) -> None:
+        """Called by the video loop when an unknown face is detected — bridges the gap
+        between face detection and the 1s fusion window so register_face doesn't miss it.
+        """
+        self._last_unknown_embedding = embedding
+        self._unknown_embedding_deadline = time.monotonic() + self.UNKNOWN_EMBEDDING_TTL_S
+
     def current_face_embedding(self):
         """Return the latest face embedding from the current context, or fall back to cache.
 

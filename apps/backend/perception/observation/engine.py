@@ -149,7 +149,8 @@ def fuse(batch: list[Observation]) -> CurrentContext:
         confidence=aggregate_confidence([c for c, _ in weights], weights=[w for _, w in weights])
         if weights
         else 0.0,
-        observations=batch,
+        # ponytail: cap observations to last 10 to prevent unbounded memory growth
+        observations=batch[-10:],
     )
 
 

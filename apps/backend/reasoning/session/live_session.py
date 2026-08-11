@@ -67,6 +67,8 @@ class GeminiLiveSession:
         # ponytail: capped exponential backoff; 5s ceiling is enough for a hackathon
         self._backoff_s = 1.0
         self._max_backoff_s = 5.0
+        # ponytail: pending prompts queued during reconnect; flushed on successful _open()
+        self._pending_prompts: list[str] = []
         # output transcription arrives in fragments (finished=None) across a turn; we
         # accumulate them and flush the full sentence to on_text (OLED) at turn boundary,
         # so the display shows one coherent line instead of flickering per-fragment.
@@ -122,6 +124,12 @@ class GeminiLiveSession:
         self._cm = self._client.aio.live.connect(model=get_settings().gemini_live_model, config=cfg)
         self._session = await self._cm.__aenter__()
         log.info("gemini live connected (model=%s)", get_settings().gemini_live_model)
+        # flush any prompts queued during the reconnect window
+        if self._pending_prompts:
+            for p in self._pending_prompts:
+                await self._session.send_realtime_input(text=p)
+            log.info("flushed %d pending prompt(s)", len(self._pending_prompts))
+            self._pending_prompts.clear()
 
     def start_receive(self) -> asyncio.Task:
         """Spawn the receive loop as a background task."""
@@ -292,7 +300,11 @@ class GeminiLiveSession:
 
     async def send_text(self, text: str) -> None:
         """Push a text instruction to the live session (proactive planner trigger)."""
-        if self._session is None or not text:
+        if not text:
+            return
+        if self._session is None:
+            self._pending_prompts.append(text)
+            log.info("prompt queued (reconnecting): %r", text[:80])
             return
         await self._session.send_realtime_input(text=text)
 

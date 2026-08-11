@@ -37,6 +37,13 @@ async def entrypoint(ctx: JobContext) -> None:
     # The worker is a separate process — it never runs the FastAPI lifespan, so Postgres +
     # Neo4j are wired here before any session/turn touches them (extraction, face names).
     await _init_stores()
+
+    # Connect to the room FIRST so we don't miss early prompts/tracks while
+    # RoomSession.create() loads models (~9s insightface). The session is built
+    # after connect; track handlers are wired in start() below.
+    await ctx.connect(auto_subscribe=True)
+    log.info("job connected to room %s (participants=%d)", room.name, len(room.remote_participants))
+
     session = await RoomSession.create(room)
 
     @room.on("participant_connected")
@@ -91,9 +98,6 @@ async def entrypoint(ctx: JobContext) -> None:
             asyncio.create_task(session.agent.feed_prompt(text))
         else:
             asyncio.create_task(handle_data_received(data, topic, session.observation_engine))
-
-    await ctx.connect(auto_subscribe=True)
-    log.info("job connected to room %s (participants=%d)", room.name, len(room.remote_participants))
 
     # explicitly subscribe to any tracks from participants already in the room
     for p in room.remote_participants.values():

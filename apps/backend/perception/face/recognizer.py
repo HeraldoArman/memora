@@ -50,6 +50,11 @@ def _load_app():
     return app
 
 
+def preload() -> None:
+    """Eagerly load the model at session start (avoids 9s stall on first frame)."""
+    _load_app()
+
+
 class FaceRecognizer:
     """Adapter over InsightFace. Detect faces → embeddings. Swap for an HTTP client impl
     when moving to a GPU worker (interface stays identical)."""
