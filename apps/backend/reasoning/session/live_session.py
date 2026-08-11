@@ -93,7 +93,15 @@ class GeminiLiveSession:
         self._on_text = on_text
         self._on_transcription = on_transcription
         self._context_text = context_text
-        await self._open()
+        # ponytail: retry with backoff — Gemini Live WS can time out on first connect
+        while True:
+            try:
+                await self._open()
+                return
+            except Exception:
+                log.warning("gemini live connect failed; retrying in %.1fs", self._backoff_s)
+                await asyncio.sleep(self._backoff_s)
+                self._backoff_s = min(self._backoff_s * 2, self._max_backoff_s)
 
     async def _open(self) -> None:
         """(Re)open the Gemini Live connection with the stored tool surface + system prompt.
