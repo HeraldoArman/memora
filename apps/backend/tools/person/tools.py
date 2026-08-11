@@ -78,14 +78,17 @@ async def register_face(args: dict, ctx: ToolContext) -> dict:
         row = await ctx.person_service.register_face(emb, person_id)
     except RuntimeError as exc:  # face_repo not wired
         return {"person_id": person_id, "enrolled": False, "note": str(exc)}
-    # Persist the index so enrollments survive restart. Without this the FAISS index +
-    # person_id sidecar live only in this process's memory — the API and each worker load
-    # separate copies, so faces enrolled via the tool would vanish on the next room.
-    # Guarded so tests that stub the service (face_repo stays None) don't crash on save.
-    if ctx.face_repo is not None:
-        from env import get_settings
+    # Persist to Postgres (durable) + FAISS file (local cache). Postgres is the
+    # source of truth across backend + worker containers; the .faiss file is a
+    # local cache for dev/offline. Guarded so tests that stub the service don't crash.
+    try:
+        from postgres.repositories import FaceEmbeddingRepo
+        from postgres.session import get_sessionmaker
 
-        ctx.face_repo.save(get_settings().faiss_index_path)
+        async with get_sessionmaker()() as db:
+            await FaceEmbeddingRepo().save(db, person_id=person_id, embedding=emb)
+    except Exception:  # noqa: BLE001 — DB unavailable shouldn't block enrollment
+        log.warning("face embedding persist to DB failed for %s", person_id)
     return {"person_id": person_id, "enrolled": True, "face_index_row": row}
 
 

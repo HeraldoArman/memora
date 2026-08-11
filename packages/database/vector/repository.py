@@ -2,8 +2,8 @@
 
 FAISS stores vectors only (no metadata). We keep a parallel list `person_ids` where
 index i ↔ person_ids[i]. register() appends; lookup() searches and maps row→person_id.
-The sidecar lives in memory; persistence of the mapping is the caller's job (Phase 2
-seed writes it alongside the index file). This stays the primitive: index + list.
+The sidecar lives in memory; the durable store is the face_embeddings Postgres table.
+Both the backend and worker rebuild their in-process FAISS index from Postgres on startup.
 
 face_recognition.md §10 thresholds: >=0.80 known, 0.60–0.80 possible, <0.60 unknown.
 """
@@ -95,6 +95,38 @@ class FaceRepository:
         index = FaceIndex.load(path)
         sidecar = Path(str(path) + ".sidecar.json")
         person_ids = json.loads(sidecar.read_text()) if sidecar.exists() else []
+        return cls(
+            index,
+            person_ids,
+            known_threshold=known_threshold,
+            possible_threshold=possible_threshold,
+        )
+
+    @classmethod
+    async def from_db(
+        cls,
+        *,
+        known_threshold: float = 0.80,
+        possible_threshold: float = 0.60,
+        dim: int = 512,
+    ) -> FaceRepository:
+        """Rebuild the in-process FAISS index from the face_embeddings Postgres table.
+
+        This is the durable path on Railway: both backend and worker call this on startup
+        instead of relying on a shared volume for the .faiss file.
+        """
+        from postgres.repositories import FaceEmbeddingRepo
+        from postgres.session import get_sessionmaker
+
+        repo = FaceEmbeddingRepo()
+        index = FaceIndex(dim=dim)
+        person_ids: list[str] = []
+        sm = get_sessionmaker()
+        async with sm() as db:
+            rows = await repo.load_all(db)
+        for person_id, emb in rows:
+            index.add(l2_normalize(emb).astype(np.float32))
+            person_ids.append(person_id)
         return cls(
             index,
             person_ids,

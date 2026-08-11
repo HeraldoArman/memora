@@ -34,6 +34,7 @@ _POSTGRES_TABLES = [
     "transcripts",
     "memory_facts",
     "conversation_sessions",
+    "face_embeddings",
     "reminders",
     "events",
     "shopping_items",

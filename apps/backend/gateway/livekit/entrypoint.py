@@ -39,7 +39,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # The worker is a separate process — it never runs the FastAPI lifespan, so Postgres +
     # Neo4j are wired here before any session/turn touches them (extraction, face names).
     await _init_stores()
-    session = RoomSession.create(room)
+    session = await RoomSession.create(room)
     await session.start()
 
     # --- wire track + data handlers ---

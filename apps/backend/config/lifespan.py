@@ -30,20 +30,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Neo4j
     await neo4j_client.init_driver(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
 
-    # FAISS — load existing index + person_id sidecar or start empty (Phase 2 wiring).
-    # FaceRepository.load builds the index AND the person_id↔row map from the sidecar,
-    # so face identity works in this process (admin API). The livekit-agent worker builds
-    # its own copy in RoomSession.create (different process, no lifespan).
-    app.state.face_repo = FaceRepository.load(
-        settings.faiss_index_path,
+    # FAISS — rebuild from Postgres (durable store). The .faiss file is a local
+    # cache for dev; on Railway both backend and worker use Postgres as source of
+    # truth so they share face registrations without a shared volume.
+    app.state.face_repo = await FaceRepository.from_db(
         known_threshold=settings.face_match_threshold,
         possible_threshold=settings.face_possible_match_threshold,
+        dim=settings.face_embedding_dim,
     )
     app.state.face_index = app.state.face_repo.index  # kept for admin/debug routes
     log.info(
-        "face repository ready: %d embedding(s) at %s",
+        "face repository ready: %d embedding(s) from DB",
         app.state.face_repo.size,
-        settings.faiss_index_path,
     )
 
     try:

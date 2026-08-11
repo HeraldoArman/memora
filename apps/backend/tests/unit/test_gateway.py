@@ -30,6 +30,16 @@ def _face_repo() -> FaceRepository:
     return repo
 
 
+def _patch_face_repo(monkeypatch, repo: FaceRepository | None = None) -> FaceRepository:
+    """Patch FaceRepository.from_db to return an in-memory repo (no DB in unit tests)."""
+    repo = repo or _face_repo()
+    monkeypatch.setattr(
+        "vector.repository.FaceRepository.from_db",
+        AsyncMock(return_value=repo),
+    )
+    return repo
+
+
 class _FakeAgent:
     """Stands in for ReasoningAgent in RoomSession.create — records construction kwargs."""
 
@@ -48,12 +58,13 @@ class _FakeAgent:
 
 
 class TestRoomSessionCreate:
-    def test_create_wires_collaborators(self, monkeypatch) -> None:
+    async def test_create_wires_collaborators(self, monkeypatch) -> None:
+        repo = _patch_face_repo(monkeypatch)
         monkeypatch.setattr("gateway.session.ReasoningAgent", _FakeAgent)
         room = MagicMock()
-        session = RoomSession.create(room)
+        session = await RoomSession.create(room)
         assert session.session_id is None  # conversation session is lazy
-        assert session.face_repo is not None
+        assert session.face_repo is repo
         assert session.tool_ctx.face_repo is session.face_repo
         assert session.agent.room is room
         assert session.agent.ctx is session.tool_ctx
@@ -61,8 +72,9 @@ class TestRoomSessionCreate:
         assert session.agent.emit_observation == session.observation_engine.emit
 
     async def test_on_extract_lazy_session_and_threading(self, monkeypatch) -> None:
+        _patch_face_repo(monkeypatch)
         monkeypatch.setattr("gateway.session.ReasoningAgent", _FakeAgent)
-        session = RoomSession.create(MagicMock())
+        session = await RoomSession.create(MagicMock())
 
         runs: list[dict] = []
 
@@ -90,8 +102,9 @@ class TestRoomSessionCreate:
         ]
 
     async def test_on_extract_db_down_does_not_raise(self, monkeypatch) -> None:
+        _patch_face_repo(monkeypatch)
         monkeypatch.setattr("gateway.session.ReasoningAgent", _FakeAgent)
-        session = RoomSession.create(MagicMock())
+        session = await RoomSession.create(MagicMock())
 
         with (
             patch(

@@ -190,7 +190,14 @@ async def main() -> None:
 
     # build the session via the gateway factory (real WorkingMemory + ObservationEngine +
     # ToolContext + ReasoningAgent), then swap in fakes for the transport-bound collaborators.
-    session = RoomSession.create(room)
+    # Patch FaceRepository.from_db to return an empty in-memory repo (no DB in verify script).
+    from unittest.mock import AsyncMock as _AM
+
+    from vector.index import FaceIndex as _FI
+    from vector.repository import FaceRepository as _FR
+
+    _FR.from_db = _AM(return_value=_FR(_FI(dim=8)))
+    session = await RoomSession.create(room)
     # replace the agent's session + speaker + display + engine with fakes so no network/DB.
     fake_live = _FakeLiveSession()
     fake_speaker = Speaker(source=_FakeAudioSource())

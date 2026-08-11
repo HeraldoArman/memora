@@ -50,7 +50,7 @@ class RoomSession:
     tasks: list = field(default_factory=list)
 
     @classmethod
-    def create(cls, room) -> RoomSession:
+    async def create(cls, room) -> RoomSession:
         """Build a wired RoomSession for a connected LiveKit room.
 
         The agent's ToolContext.current_context is kept in sync with WorkingMemory by the
@@ -63,12 +63,12 @@ class RoomSession:
         settings = get_settings()
         working_memory = WorkingMemory()
         tool_ctx = ToolContext()
-        # face repo for THIS process (FastAPI lifespan only wires the API process; the
-        # livekit-agent worker never runs it). Loads index + sidecar, or starts empty.
-        face_repo = FaceRepository.load(
-            settings.faiss_index_path,
+        # face repo for THIS process — rebuilt from Postgres (durable store) so both
+        # backend + worker share face registrations without a shared volume.
+        face_repo = await FaceRepository.from_db(
             known_threshold=settings.face_match_threshold,
             possible_threshold=settings.face_possible_match_threshold,
+            dim=settings.face_embedding_dim,
         )
         tool_ctx.face_repo = face_repo  # wires PersonService so search_by_face/register_face work
         tool_ctx.session_id = None  # lazily set by _on_extract when the conversation session starts
@@ -170,9 +170,17 @@ def _self_check() -> None:  # pragma: no cover
     import asyncio
     from unittest.mock import AsyncMock, MagicMock, patch
 
+    from vector.index import FaceIndex
+    from vector.repository import FaceRepository
+
     async def _run() -> None:
         room = MagicMock()
-        session = RoomSession.create(room)
+        fake_repo = FaceRepository(FaceIndex(dim=8))
+        with patch(
+            "vector.repository.FaceRepository.from_db",
+            new=AsyncMock(return_value=fake_repo),
+        ):
+            session = await RoomSession.create(room)
         assert session.session_id is None  # not created until first turn
         assert session.agent is not None and session.agent.on_extract is not None
 

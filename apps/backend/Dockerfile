@@ -24,12 +24,22 @@ COPY apps/backend apps/backend
 COPY packages packages
 RUN uv sync --locked --package memora-backend
 
-FROM python:3.12-slim-trixie
+FROM python:3.12-slim-trixie AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 COPY --from=builder --chown=nonroot:nonroot /app /app
+
+# Pre-fetch InsightFace buffalo_l weights (~300MB) so runtime doesn't download
+# on first face detection. InsightFace expects them at {FACE_MODEL_ROOT}/models/buffalo_l/.
+RUN apt-get update && apt-get install -y --no-install-recommends unzip ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app/models/insightface/models \
+    && curl -fsSL -o /tmp/buffalo_l.zip \
+       "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip" \
+    && unzip -q /tmp/buffalo_l.zip -d /app/models/insightface/models/buffalo_l \
+    && rm /tmp/buffalo_l.zip
 
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "apps/backend"]
