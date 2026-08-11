@@ -16,7 +16,7 @@
       "executor": "nx:run-commands",
       "options": {
         "cwd": "apps/backend",
-        "command": "uv run python -m workers.livekit_worker start"
+        "command": "uv run python -m py_compile workers/livekit_worker.py gateway/livekit/entrypoint.py"
       }
     }
   }

@@ -177,6 +177,8 @@ class TestLiveSessionRouting:
         fake_session.send_realtime_input.assert_not_called()
 
     async def test_reconnect_loop_restores_session(self) -> None:
+        import contextlib
+
         class _FakeLive:
             class _Stable:
                 # receive() must be a sync method returning an async generator —
@@ -184,9 +186,10 @@ class TestLiveSessionRouting:
                 def receive(self):
                     return _block_forever()
 
+            @contextlib.asynccontextmanager
             async def connect(self, *, model, config):
                 self.calls = getattr(self, "calls", 0) + 1
-                return self._Stable()
+                yield self._Stable()
 
         async def _block_forever():
             await asyncio.Event().wait()
@@ -396,29 +399,34 @@ class TestAgentProactive:
 class TestSpeaker:
     def _speaker(self):
         source = MagicMock()
+        source.capture_frame = AsyncMock()
         return Speaker(source=source), source
 
-    def test_feed_full_chunk(self) -> None:
+    async def test_feed_full_chunk(self) -> None:
         spk, source = self._speaker()
         spk.feed(b"\x00" * 4800)  # 100ms @ 24kHz mono
+        await asyncio.sleep(0)  # let ensure_future schedule
         source.capture_frame.assert_called_once()
         frame = source.capture_frame.call_args.args[0]
         assert frame.samples_per_channel == 2400
 
-    def test_feed_odd_length_trimmed(self) -> None:
+    async def test_feed_odd_length_trimmed(self) -> None:
         spk, source = self._speaker()
         spk.feed(b"\x00" * 4801)  # +1 byte → trimmed to 4800
+        await asyncio.sleep(0)
         frame = source.capture_frame.call_args.args[0]
         assert frame.samples_per_channel == 2400
 
-    def test_feed_empty_noop(self) -> None:
+    async def test_feed_empty_noop(self) -> None:
         spk, source = self._speaker()
         spk.feed(b"")
+        await asyncio.sleep(0)
         source.capture_frame.assert_not_called()
 
-    def test_feed_too_short_trims_to_zero(self) -> None:
+    async def test_feed_too_short_trims_to_zero(self) -> None:
         spk, source = self._speaker()
         spk.feed(b"\x00")  # 1 byte < 2-byte frame → dropped
+        await asyncio.sleep(0)
         source.capture_frame.assert_not_called()
 
 
