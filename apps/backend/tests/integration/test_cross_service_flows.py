@@ -19,7 +19,7 @@ import pytest
 from vector.index import FaceIndex
 from vector.repository import FaceRepository
 
-from postgres.repositories import SystemRepo, TranscriptRepo
+from postgres.repositories import FactRepo, SystemRepo, TranscriptRepo
 from postgres.session import get_sessionmaker
 from services import (
     EventService,
@@ -618,3 +618,153 @@ class TestFaceReRecognitionFlow:
         assert out2["known"] is True
         assert out2["person_id"] == pid
         assert out2["name"] == name
+
+
+# ---------------------------------------------------------------------------
+# 24/7 glasses: orphan facts + retroactive linking + time windowing
+# ---------------------------------------------------------------------------
+
+
+class TestOrphanFactsAndRetroactiveLinking:
+    """The 24/7 glasses plot hole: user meets someone they know but the glasses
+    don't recognise them. They talk (facts extracted, no person identified → orphaned).
+    Later the person is identified via register_person. The orphan facts from the
+    recent conversation should be retroactively linked to the new person.
+
+    Time-windowed (last 10 min) so 24/7 sessions don't mix up facts from different
+    conversation partners throughout the day.
+    """
+
+    async def _get_facts(self, session_id, limit=10):
+        """Helper: list facts for a session using a proper async context."""
+        from uuid import UUID
+
+        sm = get_sessionmaker()
+        async with sm() as db:
+            return await FactRepo().list_recent(db, session_id=UUID(session_id), limit=limit)
+
+    async def test_orphan_facts_have_no_person_id(self) -> None:
+        """Facts extracted without a person identified are orphaned (person_id=NULL)."""
+        mem = MemoryService()
+        sid = await mem.start_session()
+        from uuid import UUID
+
+        await mem.add_facts(
+            facts=["sushi is delicious", "likes coffee"],
+            session_id=UUID(sid),
+        )
+        facts = await self._get_facts(sid)
+        for f in facts:
+            assert f.person_id is None, f"fact should be orphaned: {f.fact}"
+
+    async def test_facts_tagged_when_single_person_identified(self) -> None:
+        """When the consolidator sees exactly one person, facts are tagged with their person_id."""
+        mem = MemoryService()
+        sid = await mem.start_session()
+        from uuid import UUID
+
+        pid = _name("pid")
+        await mem.add_facts(
+            facts=["Asep suka sushi"],
+            session_id=UUID(sid),
+            person_id=pid,
+        )
+        facts = await self._get_facts(sid)
+        assert len(facts) == 1
+        assert facts[0].person_id == pid
+
+    async def test_retroactive_linking_within_time_window(self) -> None:
+        """Orphan facts from the current conversation are linked to the person
+        when register_person is called within the 10-minute window."""
+        mem = MemoryService()
+        sid = await mem.start_session()
+        from uuid import UUID
+
+        # Orphan facts (no person_id)
+        await mem.add_facts(facts=["suka sushi"], session_id=UUID(sid))
+        await mem.add_facts(facts=["kerja di apotek"], session_id=UUID(sid))
+
+        # Person identified later
+        pid = _name("pid")
+        linked = await mem.link_facts_to_person(session_id=UUID(sid), person_id=pid)
+        assert linked == 2, f"expected 2 orphan facts linked, got {linked}"
+
+        # Verify they're linked
+        facts = await self._get_facts(sid)
+        for f in facts:
+            assert f.person_id == pid, f"fact not linked: {f.fact}"
+
+    async def test_old_facts_not_linked_outside_time_window(self) -> None:
+        """Facts older than 10 minutes are NOT linked — they belong to a prior conversation."""
+        mem = MemoryService()
+        sid = await mem.start_session()
+        from datetime import UTC, datetime, timedelta
+        from uuid import UUID
+
+        from postgres.models import MemoryFact
+
+        # Insert an orphan fact with an old timestamp
+        sm = get_sessionmaker()
+        async with sm() as db:
+            old_fact = MemoryFact(
+                session_id=UUID(sid),
+                person_id=None,
+                fact="old conversation fact",
+                created_at=datetime.now(UTC) - timedelta(minutes=30),
+            )
+            db.add(old_fact)
+            await db.commit()
+
+        # Also insert a recent orphan fact
+        await mem.add_facts(facts=["recent fact"], session_id=UUID(sid))
+
+        # Link — should only get the recent one, not the old one
+        pid = _name("pid")
+        linked = await mem.link_facts_to_person(session_id=UUID(sid), person_id=pid)
+        assert linked == 1, (
+            f"expected 1 recent fact linked (old one should be skipped), got {linked}"
+        )
+
+    async def test_already_linked_facts_not_relinked(self) -> None:
+        """Facts already linked to a person should not be re-linked to a new person."""
+        mem = MemoryService()
+        sid = await mem.start_session()
+        from uuid import UUID
+
+        old_pid = _name("old")
+        new_pid = _name("new")
+
+        # Fact already linked to old_pid
+        await mem.add_facts(facts=["already linked"], session_id=UUID(sid), person_id=old_pid)
+        # Orphan fact
+        await mem.add_facts(facts=["orphan"], session_id=UUID(sid))
+
+        linked = await mem.link_facts_to_person(session_id=UUID(sid), person_id=new_pid)
+        assert linked == 1, f"expected only 1 orphan fact linked, got {linked}"
+
+        # Verify the old fact still points to old_pid
+        facts = await self._get_facts(sid)
+        for f in facts:
+            if f.fact == "already linked":
+                assert f.person_id == old_pid, "already-linked fact should not be re-linked"
+
+    async def test_full_247_scenario_orphan_then_identify(self) -> None:
+        """Full scenario: 24/7 glasses, unknown person, talk about sushi → orphan fact
+        → person identified via register_person → retroactive link → fact is now theirs."""
+        from uuid import UUID
+
+        mem = MemoryService()
+        sid = await mem.start_session()
+
+        # 1. Conversation happens, no name spoken → orphan fact
+        await mem.add_facts(facts=["suka sushi"], session_id=UUID(sid))
+
+        # 2. Later, person is identified (agent calls register_person, which links)
+        pid = _name("pid")
+        await mem.link_facts_to_person(session_id=UUID(sid), person_id=pid)
+
+        # 3. Fact is now linked to this person
+        facts = await self._get_facts(sid)
+        assert len(facts) == 1
+        assert facts[0].person_id == pid
+        assert facts[0].fact == "suka sushi"

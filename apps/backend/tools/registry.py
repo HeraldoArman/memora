@@ -49,6 +49,10 @@ class ToolContext:
     # person_service is rebuilt with it so search_by_face / register_face resolve identity.
     face_repo: Any = None  # FaceRepository | None
 
+    # Current conversation session ID — wired by RoomSession so register_person can
+    # retroactively link orphan facts from this session to the newly-identified person.
+    session_id: str | None = None
+
     # ponytail: cache the last unknown-face embedding with a TTL. The current_context only
     # holds the last 1s fusion window — if the person walks away mid "siapa ini?" exchange
     # (slow dementia-patient response), the live embedding vanishes and register_face fails

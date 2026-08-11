@@ -73,6 +73,7 @@ class MemoryService:
         *,
         facts: list[str],
         session_id: UUID | None = None,
+        person_id: str | None = None,
         confidence: float | None = None,
         confidences: list[float] | None = None,
     ) -> int:
@@ -89,6 +90,19 @@ class MemoryService:
                 db,
                 facts=facts,
                 session_id=session_id,
+                person_id=person_id,
                 confidence=confidence,
                 confidences=confidences,
+            )
+
+    async def link_facts_to_person(self, *, session_id: UUID, person_id: str) -> int:
+        """Retroactively link orphan facts from the current conversation to a person.
+
+        Scoped to the last ~10 minutes so 24/7 sessions don't mix up facts from
+        different conversation partners throughout the day.
+        """
+        sm = get_sessionmaker()
+        async with sm() as db:
+            return await self.fact_repo.link_recent_orphan_facts(
+                db, session_id=session_id, person_id=person_id
             )

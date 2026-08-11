@@ -120,6 +120,40 @@ class TestPersonTools:
         assert (await per.register_person({}, ctx))["error"] == "name required"
         assert await per.register_person({"name": "Asep"}, ctx) == {"person": {"person_id": "p1"}}
 
+    async def test_register_person_links_orphan_facts(self) -> None:
+        """When session_id is set, register_person retroactively links orphan facts
+        from the current conversation to the newly-identified person."""
+        from uuid import uuid4
+
+        ctx = _ctx()
+        ctx.person_service.register_person = AsyncMock(return_value={"person_id": "p1"})
+        ctx.memory_service.link_facts_to_person = AsyncMock(return_value=3)
+        ctx.session_id = str(uuid4())
+        await per.register_person({"name": "Asep"}, ctx)
+        ctx.memory_service.link_facts_to_person.assert_awaited_once()
+        call = ctx.memory_service.link_facts_to_person.await_args.kwargs
+        assert call["person_id"] == "p1"
+
+    async def test_register_person_no_session_no_link(self) -> None:
+        """Without an active session, no retroactive linking is attempted."""
+        ctx = _ctx()
+        ctx.person_service.register_person = AsyncMock(return_value={"person_id": "p1"})
+        ctx.memory_service.link_facts_to_person = AsyncMock(return_value=0)
+        ctx.session_id = None
+        await per.register_person({"name": "Asep"}, ctx)
+        ctx.memory_service.link_facts_to_person.assert_not_called()
+
+    async def test_register_person_link_failure_caught(self) -> None:
+        """Link failure must not crash the tool — the person is still registered."""
+        from uuid import uuid4
+
+        ctx = _ctx()
+        ctx.person_service.register_person = AsyncMock(return_value={"person_id": "p1"})
+        ctx.memory_service.link_facts_to_person = AsyncMock(side_effect=RuntimeError("db down"))
+        ctx.session_id = str(uuid4())
+        result = await per.register_person({"name": "Asep"}, ctx)
+        assert result == {"person": {"person_id": "p1"}}
+
     async def test_register_face_no_person_id(self) -> None:
         assert (await per.register_face({}, _ctx()))["error"] == "person_id required"
 

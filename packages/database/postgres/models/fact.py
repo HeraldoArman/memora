@@ -27,6 +27,9 @@ class MemoryFact(Base):
         nullable=True,
         index=True,
     )
+    # NULL until the person is identified (may happen retroactively after
+    # register_person). Links the fact to a Person node in Neo4j.
+    person_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     fact: Mapped[str] = mapped_column(Text)
     category: Mapped[str | None] = mapped_column(String(32), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)

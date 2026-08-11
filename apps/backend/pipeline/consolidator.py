@@ -155,14 +155,19 @@ class Consolidator:
         # per-fact: a first-person statement ("I'm Asep") gets the provenance boost, a
         # third-person one ("Asep works at Tokopedia") does not — applying the boost to the
         # whole turn over-credited facts the speaker wasn't asserting about themselves.
+        # If exactly one person was identified in this extraction, tag all facts with them.
+        # When no person is identified (unnamed conversation), facts are orphaned (person_id
+        # = NULL) and later linked retroactively when the person is identified.
         facts = [str(f) for f in extraction.get("facts", [])]
         fact_count = 0
         if facts:
             fact_confidences = [first_person_boost(confidence, f) for f in facts]
+            fact_person_id = next(iter(person_ids.values())) if len(person_ids) == 1 else None
             try:
                 fact_count = await self.memory_service.add_facts(
                     facts=facts,
                     session_id=UUID(session_id) if session_id else None,
+                    person_id=fact_person_id,
                     confidences=fact_confidences,
                 )
             except Exception as e:  # noqa: BLE001

@@ -71,6 +71,7 @@ class RoomSession:
             possible_threshold=settings.face_possible_match_threshold,
         )
         tool_ctx.face_repo = face_repo  # wires PersonService so search_by_face/register_face work
+        tool_ctx.session_id = None  # lazily set by _on_extract when the conversation session starts
         log.info("room session face repo ready: %d embedding(s)", face_repo.size)
 
         from perception.scene.understander import SceneUnderstander
@@ -121,6 +122,7 @@ class RoomSession:
                     session.session_id = await MemoryService().start_session(
                         summary="device session"
                     )
+                    tool_ctx.session_id = session.session_id
                     log.info("conversation session created: %s", session.session_id)
                 consolidator = Consolidator(
                     text_embedder=session.text_embedder,

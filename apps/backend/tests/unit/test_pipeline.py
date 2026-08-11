@@ -165,3 +165,55 @@ class TestConsolidator:
         out = await c.consolidate(extraction)
         assert out["action"] == "create"
         c.knowledge_service.add_relation.assert_not_called()
+
+    async def test_single_person_facts_tagged_with_person_id(self) -> None:
+        """When exactly one person is identified in the extraction, facts are tagged
+        with their person_id — prevents orphan facts when the name is spoken."""
+        c = self._cons()
+        c.person_service.register_person = AsyncMock(return_value={"person_id": "pid1"})
+        extraction = {
+            "confidence": 0.9,
+            "entities": [{"name": "Asep", "category": "Person"}],
+            "relationships": [],
+            "facts": ["Asep suka sushi", "Asep kerja di apotek"],
+        }
+        await c.consolidate(extraction, content="Asep suka sushi", session_id=str(uuid4()))
+        c.memory_service.add_facts.assert_awaited_once()
+        call = c.memory_service.add_facts.await_args.kwargs
+        assert call["person_id"] == "pid1", "facts should be tagged with the single person_id"
+
+    async def test_no_person_facts_orphaned(self) -> None:
+        """When no person is identified (unnamed conversation), facts are orphaned
+        (person_id=None) — linked retroactively later when the person is identified."""
+        c = self._cons()
+        extraction = {
+            "confidence": 0.7,
+            "entities": [{"name": "sushi", "category": "Food"}],
+            "relationships": [],
+            "facts": ["sushi is delicious"],
+        }
+        await c.consolidate(extraction, content="sushi is delicious", session_id=str(uuid4()))
+        c.memory_service.add_facts.assert_awaited_once()
+        call = c.memory_service.add_facts.await_args.kwargs
+        assert call.get("person_id") is None, "facts should be orphaned when no person identified"
+
+    async def test_multiple_persons_facts_not_tagged(self) -> None:
+        """When multiple persons are identified, facts can't be confidently attributed
+        to one — leave them orphaned rather than guessing."""
+        c = self._cons()
+        c.person_service.register_person = AsyncMock(
+            side_effect=[{"person_id": "pid1"}, {"person_id": "pid2"}]
+        )
+        extraction = {
+            "confidence": 0.9,
+            "entities": [
+                {"name": "Asep", "category": "Person"},
+                {"name": "Budi", "category": "Person"},
+            ],
+            "relationships": [],
+            "facts": ["Asep and Budi are friends"],
+        }
+        await c.consolidate(extraction, content="Asep and Budi", session_id=str(uuid4()))
+        c.memory_service.add_facts.assert_awaited_once()
+        call = c.memory_service.add_facts.await_args.kwargs
+        assert call.get("person_id") is None, "facts should not be tagged with multiple persons"
