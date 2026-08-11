@@ -73,16 +73,13 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
     _SCENE_INTERVAL = 5
 
     async def _video_loop() -> None:
+        nonlocal _scene_counter
         try:
             async for frame in sampler.frames():
                 # 1. face identity path (deterministic; Gemini can't match a gallery)
                 try:
                     faces = recognizer.detect_and_embed(frame["bgr"])
                     if faces:
-                        # ponytail: emit the first detected face every frame. The
-                        # seen_tracks filter was causing visible_people to go empty
-                        # after 30s TTL — the face was only emitted once, then the
-                        # context went stale and tools returned [].
                         f = faces[0]
                         obs = await _lookup_face(f.embedding, session.face_repo)
                         if obs is not None:
@@ -112,13 +109,12 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
                     except Exception:  # noqa: BLE001
                         log.exception("scene understand failed")
 
-                # 2. Gemini Live video path (≤1 FPS, enforced by sampler)
-                try:
-                    await session.agent.feed_video(frame["jpeg"])
-                except Exception:  # noqa: BLE001
-                    log.exception("feed_video failed")
+                # ponytail: no feed_video to Gemini Live — the native-audio model gets
+                # visual context through tool calls (visible_people, current_scene).
+                # Sending raw JPEGs to send_realtime_input(video=...) caused ~66MB/s
+                # memory growth in the SDK (274MB→3.2GB in 3min, process killed).
 
-                # 3. sync tool context so tools see fresh CurrentContext
+                # 2. sync tool context so tools see fresh CurrentContext
                 session.sync_context()
         except asyncio.CancelledError:
             raise
