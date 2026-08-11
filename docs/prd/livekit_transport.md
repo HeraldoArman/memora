@@ -105,7 +105,7 @@ Failure of one channel should not interrupt the others.
 
 # 5. Video Transport
 
-The wearable continuously streams video captured by the OV2640 camera.
+The wearable continuously streams video captured by the OV3660 camera.
 
 Responsibilities include:
 

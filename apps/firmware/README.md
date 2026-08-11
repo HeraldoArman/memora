@@ -26,7 +26,7 @@ The LiveKit ESP32 SDK is pinned to `0.3.10` in `main/idf_component.yml`.
 | Button leg 1 | D1 / GPIO2 |
 | Button leg 2 | GND |
 
-The button is active-low with the internal pull-up enabled. The OV2640 camera and
+The button is active-low with the internal pull-up enabled. The OV3660 camera and
 onboard PDM microphone use the Sense expansion-board pins defined in `main/hardware.h`.
 
 ## Current scope
@@ -37,5 +37,5 @@ telemetry, and LiveKit room/data transport. It publishes the backend-compatible
 
 Camera and microphone media capture are isolated for the next increment: the LiveKit
 SDK requires an `esp_capture` handle and H.264/Opus media pipeline, which must be
-validated on the actual OV2640 and onboard PDM microphone hardware. There is no audio
+validated on the actual OV3660 and onboard PDM microphone hardware. There is no audio
 renderer because the current hardware has no speaker.

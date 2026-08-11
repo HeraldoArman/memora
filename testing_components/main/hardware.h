@@ -9,7 +9,7 @@ constexpr gpio_num_t kOledSda = GPIO_NUM_5;
 constexpr gpio_num_t kOledScl = GPIO_NUM_6;
 constexpr uint8_t kOledAddress = 0x3C;
 
-// XIAO ESP32-S3 Sense OV2640 DVP camera pins.
+// XIAO ESP32-S3 Sense OV3660 DVP camera pins.
 constexpr int kCameraPwdn = -1;
 constexpr int kCameraReset = -1;
 constexpr int kCameraXclk = 10;
@@ -26,5 +26,9 @@ constexpr int kCameraD7 = 48;
 constexpr int kCameraVsync = 38;
 constexpr int kCameraHref = 47;
 constexpr int kCameraPclk = 13;
+
+// XIAO ESP32-S3 Sense onboard PDM microphone pins.
+constexpr gpio_num_t kMicrophoneClock = GPIO_NUM_42;
+constexpr gpio_num_t kMicrophoneData = GPIO_NUM_41;
 
 }  // namespace test_hardware

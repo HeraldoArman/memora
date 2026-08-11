@@ -96,7 +96,7 @@ Reasoning --> Glasses
 
 **Figure 1** illustrates the overall system architecture.
 
-## **1\. IoT Wearable & Perception Layer** The wearable prototype is built around the **Seeed Studio XIAO ESP32-S3 Sense**, equipped with an OV2640 camera, microphone, OLED display, rechargeable battery, and Wi-Fi connectivity. Rather than performing AI inference locally, the wearable functions as a lightweight IoT sensing device that continuously captures multimodal information and securely streams it to cloud services through **LiveKit**. ([Hardware design, component and concept are detailed in Appendix B](#bookmark=id.dulqlfcym3b5)) The cloud-based perception layer processes incoming visual and audio streams using multiple specialized AI models. **InsightFace** performs face detection and generates facial embeddings, while **FAISS** enables efficient similarity search to recognize previously encountered individuals. At the same time, **Gemini Vision** analyzes the surrounding environment, and speech is converted into text through Speech-to-Text processing. The outputs of these perception modules are combined into a **Working Memory**, which represents the user's current context, including visible people, ongoing conversations, and environmental information. This contextual representation serves as the foundation for subsequent memory formation and reasoning.
+## **1\. IoT Wearable & Perception Layer** The wearable prototype is built around the **Seeed Studio XIAO ESP32-S3 Sense**, equipped with an OV3660 camera, microphone, OLED display, rechargeable battery, and Wi-Fi connectivity. Rather than performing AI inference locally, the wearable functions as a lightweight IoT sensing device that continuously captures multimodal information and securely streams it to cloud services through **LiveKit**. ([Hardware design, component and concept are detailed in Appendix B](#bookmark=id.dulqlfcym3b5)) The cloud-based perception layer processes incoming visual and audio streams using multiple specialized AI models. **InsightFace** performs face detection and generates facial embeddings, while **FAISS** enables efficient similarity search to recognize previously encountered individuals. At the same time, **Gemini Vision** analyzes the surrounding environment, and speech is converted into text through Speech-to-Text processing. The outputs of these perception modules are combined into a **Working Memory**, which represents the user's current context, including visible people, ongoing conversations, and environmental information. This contextual representation serves as the foundation for subsequent memory formation and reasoning.
 
 ## **2\. Memory OS** The core innovation of the proposed system is **Memory OS**, a persistent memory engine that continuously transforms everyday experiences into structured long-term knowledge. Instead of storing raw conversations alone, the system processes every interaction through a **Memory Pipeline** consisting of three stages:
 
@@ -149,7 +149,7 @@ The reasoning layer is powered by **Gemini Live**, which provides natural multim
 
 |         Layer          |                 Technology                  |
 | :--------------------: | :-----------------------------------------: |
-|    Wearable Device     | ESP32-S3 Sense, OV2640 Camera, OLED Display |
+|    Wearable Device     | ESP32-S3 Sense, OV3660 Camera, OLED Display |
 |  Embedded Development  |      Arduino Framework / ESP-IDF (C++)      |
 | Realtime Communication |                   LiveKit                   |
 |      Backend API       |                   FastAPI                   |
@@ -297,7 +297,7 @@ This appendix provides a comprehensive explanation of the proposed system archit
 ```mermaidjs
 flowchart LR
  subgraph DEVICE["Smart Glasses (ESP32-S3)"]
-        CAM["📷 OV2640 Camera"]
+        CAM["📷 OV3660 Camera"]
         MIC["🎤 Microphone"]
         OLED["🖥️ OLED Display"]
         FW["Firmware"]
@@ -394,7 +394,7 @@ Rather than executing all artificial intelligence models directly on the wearabl
 
 The wearable prototype is built around the **Seeed Studio XIAO ESP32-S3 Sense**, selected because it integrates Wi-Fi, Bluetooth, camera support, and sufficient processing capability within a compact form factor suitable for wearable applications. The device consists of several hardware components:
 
-- OV2640 Camera
+- OV3660 Camera
 - Built-in microphone
 - OLED display
 - Rechargeable battery
@@ -599,7 +599,7 @@ The wearable prototype is assembled from several off-the-shelf hardware modules 
 The primary hardware components include:
 
 - Seeed Studio XIAO ESP32-S3 Sense
-- OV2640 Camera Module
+- OV3660 Camera Module
 - OLED Display
 - Rechargeable Battery
 - Battery Charging Module

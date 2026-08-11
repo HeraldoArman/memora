@@ -6,7 +6,7 @@ Firmware is now a native ESP-IDF 5.4+ project under `apps/firmware`. See
 `apps/firmware/README.md` for device wiring and firmware build instructions.
 
 Standalone hardware checks live under `testing_components/` and validate the
-OV2640 camera and OLED before full firmware integration.
+OV3660 camera and OLED before full firmware integration.
 
 ## Stack
 

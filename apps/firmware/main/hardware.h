@@ -14,7 +14,7 @@ constexpr uint8_t kOledAddress = 0x3C;
 // User-provided wiring: switch between D1/GPIO2 and GND.
 constexpr gpio_num_t kButton = GPIO_NUM_2;
 
-// XIAO ESP32-S3 Sense OV2640 DVP camera wiring.
+// XIAO ESP32-S3 Sense OV3660 DVP camera wiring.
 constexpr gpio_num_t kCameraXclk = GPIO_NUM_10;
 constexpr gpio_num_t kCameraY2 = GPIO_NUM_15;
 constexpr gpio_num_t kCameraY3 = GPIO_NUM_17;

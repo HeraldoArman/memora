@@ -139,7 +139,7 @@ During startup, every subsystem performs a self-check before entering operationa
 
 # 6. Camera Service
 
-The Camera Service controls the OV2640 camera module.
+The Camera Service controls the OV3660 camera module.
 
 Responsibilities include:
 

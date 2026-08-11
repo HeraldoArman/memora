@@ -5,13 +5,16 @@ them into the full firmware.
 
 ## Checks
 
-- OLED basic SSD1306-compatible I²C pattern on D4/GPIO5 and D5/GPIO6.
-- OV2640 camera initialization and JPEG frame capture over the XIAO ESP32-S3 Sense
+- OLED displays the native 5x7-font text `memora gerry aldo rifqi gg auto win
+  sini duit 20 juta` on a SSD1306-compatible I²C module using D4/GPIO5 and
+  D5/GPIO6.
+- OV3660 camera initialization and JPEG frame capture over the XIAO ESP32-S3 Sense
   DVP camera bus.
+- Onboard PDM microphone initialization and 16 kHz PCM sample capture on GPIO42/41.
 
 The serial monitor prints a PASS/FAIL summary and then logs camera frame dimensions
-and byte lengths every two seconds. The OLED alternates between two patterns after
-each capture.
+and byte lengths, plus microphone peak and average absolute levels, every two
+seconds. The OLED keeps displaying the test text after each capture.
 
 ## Wiring
 
@@ -21,9 +24,11 @@ each capture.
 | OLED GND | GND |
 | OLED SDA | D4 / GPIO5 |
 | OLED SCL | D5 / GPIO6 |
+| Microphone CLK | GPIO42 |
+| Microphone DATA | GPIO41 |
 
 The camera uses the fixed Sense expansion-board pins in
-`main/hardware.h`; no external camera wiring is required when the OV2640 module is
+`main/hardware.h`; no external camera wiring is required when the OV3660 module is
 seated in the Sense expansion board.
 
 ## Build and flash
