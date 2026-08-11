@@ -49,10 +49,13 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
+    # ssl="prefer": match init_engine — Railway postgres-ssl needs SSL, local
+    # plain postgres doesn't. Without this, alembic can't connect on Railway.
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args={"ssl": "prefer"},
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

@@ -18,9 +18,20 @@ _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 
 def init_engine(database_url: str, *, echo: bool = False) -> None:
-    """Create the global engine + sessionmaker. Call once at startup."""
+    """Create the global engine + sessionmaker. Call once at startup.
+
+    ssl="prefer": asyncpg attempts SSL, falls back to plaintext if the server
+    refuses. Railway's postgres-ssl template enforces SSL with a self-signed
+    cert (no sslmode in DATABASE_URL); local docker-compose runs plain
+    postgres. "prefer" works for both without cert verification.
+    """
     global _engine, _sessionmaker
-    _engine = create_async_engine(database_url, echo=echo, pool_pre_ping=True)
+    _engine = create_async_engine(
+        database_url,
+        echo=echo,
+        pool_pre_ping=True,
+        connect_args={"ssl": "prefer"},
+    )
     _sessionmaker = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
 
 
