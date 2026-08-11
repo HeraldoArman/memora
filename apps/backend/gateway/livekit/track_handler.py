@@ -153,7 +153,12 @@ async def _lookup_face(embedding, face_repo) -> FaceObservation | None:
             except Exception:  # noqa: BLE001
                 log.warning("face name lookup failed for %s; keeping name=None", result.person_id)
         if result.person_id is None:
-            log.debug("face lookup: unknown score=%.3f", result.score)
+            log.info(
+                "face lookup: unknown score=%.3f (threshold known=%.2f possible=%.2f)",
+                result.score,
+                face_repo.known_threshold,
+                face_repo.possible_threshold,
+            )
         else:
             log.info(
                 "face lookup: %s name=%s score=%.3f known=%s possible=%s",

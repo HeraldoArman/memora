@@ -124,6 +124,11 @@ class FaceRepository:
         sm = get_sessionmaker()
         async with sm() as db:
             rows = await repo.load_all(db)
+        import logging as _log
+
+        _log.getLogger(__name__).info(
+            "from_db: loaded %d face embedding(s) from Postgres", len(rows)
+        )
         for person_id, emb in rows:
             index.add(l2_normalize(emb).astype(np.float32))
             person_ids.append(person_id)
