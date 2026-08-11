@@ -10,16 +10,32 @@ persistent_storage.md graph schema. Person is the hub; other entities attach via
 
 from __future__ import annotations
 
-# Upsert a Person by name (merge-on-name idempotency). On create, stamp a
-# person_id so identity lookups (face → person) have a stable key. Re-mentioning
-# "Asep" reuses the same node — no duplicate Person nodes fragmenting facts.
-UPSERT_PERSON = """
+# Upsert a Person. Two merge keys depending on caller intent:
+#   - person_id provided → MERGE on person_id (caller's id is authoritative; a
+#     re-register with a new id for the same name must update name, not silently
+#     keep the old id — that detached face vectors from profiles).
+#   - person_id absent (consolidator re-mention) → MERGE on name for cross-run
+#     dedupe, stamping a fresh person_id on create.
+UPSERT_PERSON_BY_ID = """
+MERGE (p:Person {person_id: $person_id})
+ON CREATE SET p.name = $name
+SET p.name = $name,
+    p.notes = coalesce($notes, p.notes),
+    p.updated_at = datetime()
+RETURN p.person_id AS person_id, p.name AS name, p.notes AS notes
+"""
+
+UPSERT_PERSON_BY_NAME = """
 MERGE (p:Person {name: $name})
 ON CREATE SET p.person_id = $person_id
 SET p.notes = coalesce($notes, p.notes),
     p.updated_at = datetime()
 RETURN p.person_id AS person_id, p.name AS name, p.notes AS notes
 """
+
+# Kept for backward compatibility — merges on name only (the buggy path where a
+# caller's explicit person_id was dropped on a name match). Prefer UPSERT_PERSON_BY_ID.
+UPSERT_PERSON = UPSERT_PERSON_BY_NAME
 
 
 def upsert_entity_cypher(label: str) -> str:

@@ -24,11 +24,13 @@ class PersonService:
         self.face_repo = face_repo
 
     async def register_person(self, *, name: str, person_id: str | None = None) -> dict:
-        """Create or update a Person node. Returns the node dict."""
-        from utils.time_ids import gen_id
+        """Create or update a Person node. Returns the node dict.
 
-        pid = person_id or gen_id()
-        return await self.person_repo.upsert_person(person_id=pid, name=name)
+        With an explicit person_id, MERGE on it (caller's id is authoritative —
+        re-registering an existing name with a new id must update, not drop it).
+        Without, MERGE on name for cross-run dedupe (consolidator re-mention).
+        """
+        return await self.person_repo.upsert_person(person_id=person_id, name=name)
 
     async def update_person(self, *, person_id: str, notes: str | None = None) -> dict | None:
         person = await self.person_repo.get_person(person_id)

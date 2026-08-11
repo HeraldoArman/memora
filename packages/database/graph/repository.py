@@ -28,11 +28,26 @@ def _label_for_category(category: str) -> str:
 class PersonRepo:
     """CRUD for Person nodes (the hub of the graph)."""
 
-    async def upsert_person(self, *, person_id: str, name: str, notes: str | None = None) -> dict:
+    async def upsert_person(
+        self, *, person_id: str | None = None, name: str, notes: str | None = None
+    ) -> dict:
+        """MERGE on person_id when given (caller-authoritative id), else on name
+        (consolidator dedupe-by-name). Returning the node lets the caller thread
+        the resolved person_id into subsequent relation calls."""
+        from utils.time_ids import gen_id
+
         async with neo4j_client.get_driver().session() as s:
-            rec = await s.execute_write(
-                _upsert_person_tx, person_id=person_id, name=name, notes=notes
-            )
+            if person_id is not None:
+                rec = await s.execute_write(
+                    _upsert_person_by_id_tx, person_id=person_id, name=name, notes=notes
+                )
+            else:
+                rec = await s.execute_write(
+                    _upsert_person_by_name_tx,
+                    person_id=gen_id(),
+                    name=name,
+                    notes=notes,
+                )
             return dict(rec) if rec else {}
 
     async def get_person(self, person_id: str) -> dict | None:
@@ -86,8 +101,16 @@ class KnowledgeGraphRepo:
 # --- tx functions (run inside driver sessions) ---
 
 
-async def _upsert_person_tx(tx, *, person_id, name, notes):
-    result = await tx.run(queries.UPSERT_PERSON, person_id=person_id, name=name, notes=notes)
+async def _upsert_person_by_id_tx(tx, *, person_id, name, notes):
+    result = await tx.run(queries.UPSERT_PERSON_BY_ID, person_id=person_id, name=name, notes=notes)
+    rec = await result.single()
+    return rec
+
+
+async def _upsert_person_by_name_tx(tx, *, person_id, name, notes):
+    result = await tx.run(
+        queries.UPSERT_PERSON_BY_NAME, person_id=person_id, name=name, notes=notes
+    )
     rec = await result.single()
     return rec
 
