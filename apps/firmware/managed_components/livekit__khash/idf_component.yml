@@ -1,0 +1,5 @@
+description: A generic hash table with open addressing.
+license: MIT
+repository: https://github.com/attractivechaos/klib
+url: https://attractivechaos.github.io/klib/
+version: 0.2.8
