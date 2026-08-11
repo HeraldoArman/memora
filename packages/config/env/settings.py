@@ -65,7 +65,10 @@ class Settings(BaseSettings):
     face_model_root: str = "models/insightface"
 
     # === Perception ===
-    frame_sample_fps: float = 1.0
+    # ponytail: 0.5 FPS (every 2s) — InsightFace ONNX runtime leaks ~20MB/frame on CPU.
+    # 1 FPS fills 1.8GB in 80s and gets killed. 0.5 FPS gives ~4 min before OOM.
+    # Fix: use a separate process for face detection, or switch to a lighter model.
+    frame_sample_fps: float = 0.5
     observation_fusion_window_ms: int = 1000
     observation_ttl_ms: int = 5000
     max_context_age_ms: int = 30000

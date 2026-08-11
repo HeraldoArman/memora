@@ -53,7 +53,7 @@ class TestSettingsDefaults:
         assert settings.observation_fusion_window_ms == 1000
         assert settings.observation_ttl_ms == 5000
         assert settings.max_context_age_ms == 30000
-        assert settings.frame_sample_fps == 1.0
+        assert settings.frame_sample_fps == 0.5
         assert settings.gemini_audio_output_sample_rate == 24000
         assert settings.gemini_audio_output_channels == 1
         assert settings.gemini_live_model == "gemini-2.0-flash-exp"

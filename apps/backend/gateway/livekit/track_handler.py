@@ -20,6 +20,7 @@ recognizer's embedding is attached so search_person_by_face can use it.
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 
 log = logging.getLogger(__name__)
@@ -72,8 +73,10 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
 
     async def _video_loop() -> None:
         log.info("video loop started")
+        frame_count = 0
         try:
             async for frame in sampler.frames():
+                frame_count += 1
                 try:
                     bgr = frame["bgr"]
                     faces = recognizer.detect_and_embed(bgr)
@@ -87,6 +90,10 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
                         f = faces[0]
                         await _update_last_face(f, session)
                     del bgr, faces
+                    # ponytail: gc.collect every 10 frames — InsightFace ONNX runtime
+                    # fragments memory on CPU; periodic collection slows the leak.
+                    if frame_count % 10 == 0:
+                        gc.collect()
                 except Exception:  # noqa: BLE001 — perception errors must not kill the loop
                     log.exception("face recognize failed")
         except asyncio.CancelledError:

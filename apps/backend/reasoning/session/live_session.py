@@ -108,13 +108,25 @@ class GeminiLiveSession:
         self._connect_task = asyncio.create_task(self._connect_with_retry(), name="gemini-connect")
 
     async def _connect_with_retry(self) -> None:
-        """Background connect with backoff. Flushed pending prompts on success."""
+        """Background connect with backoff. Flushes pending prompts on success."""
         while not self._closing:
             try:
-                await self._open()
+                await asyncio.wait_for(self._open(), timeout=30.0)
                 return  # success
-            except Exception:
-                log.warning("gemini live connect failed; retrying in %.1fs", self._backoff_s)
+            except TimeoutError:
+                log.warning(
+                    "gemini live connect timed out (30s); retrying in %.1fs", self._backoff_s
+                )
+                await self._close_cm()
+                self._session = None
+                await asyncio.sleep(self._backoff_s)
+                self._backoff_s = min(self._backoff_s * 2, self._max_backoff_s)
+            except Exception as exc:
+                log.warning(
+                    "gemini live connect failed: %s; retrying in %.1fs", exc, self._backoff_s
+                )
+                await self._close_cm()
+                self._session = None
                 await asyncio.sleep(self._backoff_s)
                 self._backoff_s = min(self._backoff_s * 2, self._max_backoff_s)
 
