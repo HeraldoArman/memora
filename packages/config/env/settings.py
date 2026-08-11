@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = "INFO"
 
+    # === Worker health check ===
+    worker_health_port: int = 8001
+
     # === Locale ===
     # IANA tz for local-day windows (reminders, schedules). Indonesia is UTC+7.
     local_timezone: str = "Asia/Jakarta"

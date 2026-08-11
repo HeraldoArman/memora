@@ -7,6 +7,7 @@ import { CameraPreview } from "@/components/device/camera-preview";
 import { ConnectionLog } from "@/components/device/connection-log";
 import { StatusBadge, type Status } from "@/components/device/status-badge";
 import { TelemetryControls } from "@/components/device/telemetry-controls";
+import { getPublicEnv } from "@/lib/env";
 
 // ponytail: one hardcoded room — this is a local dummy-device harness.
 // Add a room/identity chooser when the dashboard grows.
@@ -21,6 +22,7 @@ export function DeviceHarness() {
   const [battery, setBattery] = useState(85);
   const [buttonPressed, setButtonPressed] = useState(false);
   const [prompt, setPrompt] = useState("");
+  const [workerReady, setWorkerReady] = useState(false);
 
   const roomRef = useRef<Room | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -31,6 +33,29 @@ export function DeviceHarness() {
 
   const log = useCallback((line: string) => {
     setLogs((prev) => [...prev.slice(-80), `${new Date().toLocaleTimeString()}  ${line}`]);
+  }, []);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval>;
+    let active = true;
+    const { workerHealthUrl } = getPublicEnv();
+    const check = async () => {
+      try {
+        const res = await fetch(workerHealthUrl);
+        if (res.ok && active) {
+          setWorkerReady(true);
+          clearInterval(timer);
+        }
+      } catch {
+        // worker not up yet
+      }
+    };
+    timer = setInterval(check, 1000);
+    void check();
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
   }, []);
 
   const publishTelemetry = useCallback(
@@ -155,10 +180,10 @@ export function DeviceHarness() {
           <div className="flex gap-2">
             <button
               onClick={connect}
-              disabled={status === "connected" || status === "connecting"}
+              disabled={status === "connected" || status === "connecting" || !workerReady}
               className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-40"
             >
-              Connect
+              {workerReady ? "Connect" : "Waiting for worker…"}
             </button>
             <button
               onClick={disconnect}

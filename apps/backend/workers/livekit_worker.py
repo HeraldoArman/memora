@@ -15,8 +15,11 @@ processes (plan: Railway two-service or single-service-dual-cmd deploy).
 from __future__ import annotations
 
 import logging
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from dotenv import load_dotenv
+from env import get_settings
 from livekit.agents import AgentServer, cli
 
 from config.logging import setup_logging
@@ -31,12 +34,35 @@ server = AgentServer()
 server.rtc_session(entrypoint, agent_name="memora-agent")
 
 
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("content-type", "text/plain")
+            self.send_header("access-control-allow-origin", "*")
+            self.end_headers()
+            self.wfile.write(b"ok")
+        else:
+            self.send_response(404)
+            self.send_header("access-control-allow-origin", "*")
+            self.end_headers()
+
+    def log_message(self, *a):
+        pass
+
+
+def _start_health_server(port: int) -> None:
+    srv = HTTPServer(("127.0.0.1", port), _HealthHandler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    log.info("worker health check on http://127.0.0.1:%d/health", port)
+
+
 def main() -> None:
     """Run the livekit-agent worker. CLI args: dev | start."""
     setup_logging()
-    # pydantic-settings reads .env for get_settings(), but the livekit-agent CLI reads
-    # LIVEKIT_URL/API_KEY/SECRET straight from os.environ — export .env first.
     load_dotenv()
+    settings = get_settings()
+    _start_health_server(settings.worker_health_port)
     log.info("starting livekit agent worker")
     cli.run_app(server)
 

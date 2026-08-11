@@ -192,8 +192,8 @@ async def handle_audio_track(track, room, session) -> asyncio.Task:
             await forwarder.run()
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001
-            log.exception("audio loop crashed")
+        except Exception:  # noqa: BLE001 — gemini ws closed; receive loop reconnects
+            log.info("audio forwarder ended (gemini reconnecting); loop exits cleanly")
 
     task = asyncio.create_task(_audio_loop(), name="audio-loop")
     return task

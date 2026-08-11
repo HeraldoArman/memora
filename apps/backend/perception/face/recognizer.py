@@ -54,12 +54,20 @@ class FaceRecognizer:
     """Adapter over InsightFace. Detect faces → embeddings. Swap for an HTTP client impl
     when moving to a GPU worker (interface stays identical)."""
 
-    def detect_and_embed(self, img: np.ndarray, *, max_num: int = 0) -> list[DetectedFace]:
-        """Detect faces in img (BGR uint8 HxWx3). Returns [] if none. max_num=0 → all."""
+    def detect_and_embed(
+        self, img: np.ndarray, *, max_num: int = 0, min_det_score: float = 0.5
+    ) -> list[DetectedFace]:
+        """Detect faces in img (BGR uint8 HxWx3). Returns [] if none. max_num=0 → all.
+
+        min_det_score filters low-confidence detections (e.g. water bottles, shadows)
+        so they don't produce spurious embeddings that surface as "Orang tidak dikenali".
+        """
         app = _load_app()
         faces = app.get(img, max_num=max_num)
         result: list[DetectedFace] = []
         for f in faces:
+            if f.det_score < min_det_score:
+                continue
             emb = f.normed_embedding
             if emb is None:
                 continue

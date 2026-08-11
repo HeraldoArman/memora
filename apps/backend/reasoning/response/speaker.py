@@ -62,8 +62,14 @@ class Speaker:
                 return
         samples_per_channel = len(pcm) // frame_bytes
         frame = rtc.AudioFrame(pcm, _SAMPLE_RATE, _CHANNELS, samples_per_channel)
-        # capture_frame is async — schedule it on the event loop without blocking
-        asyncio.ensure_future(self._source.capture_frame(frame))
+        # ponytail: fire-and-forget but swallow InvalidState during teardown
+        asyncio.ensure_future(self._safe_capture(frame))
+
+    async def _safe_capture(self, frame: rtc.AudioFrame) -> None:
+        try:
+            await self._source.capture_frame(frame)
+        except Exception:  # noqa: BLE001 — InvalidState during teardown is expected
+            pass
 
     async def aclose(self) -> None:
         if self._pub is not None:

@@ -272,15 +272,23 @@ class GeminiLiveSession:
         """Push a video frame (JPEG bytes) to the live session, ≤1 FPS."""
         if self._session is None:
             return
-        await self._session.send_realtime_input(video=types.Blob(mime_type="image/jpeg", data=jpeg))
+        try:
+            await self._session.send_realtime_input(
+                video=types.Blob(mime_type="image/jpeg", data=jpeg)
+            )
+        except Exception:  # noqa: BLE001 — ws closed; receive loop reconnects
+            log.debug("send_video dropped (connection closed)")
 
     async def send_audio(self, pcm: bytes, *, sample_rate: int = 16000) -> None:
         """Push an audio chunk (16-bit PCM) to the live session."""
         if self._session is None:
             return
-        await self._session.send_realtime_input(
-            audio=types.Blob(mime_type=f"audio/pcm;rate={sample_rate}", data=pcm)
-        )
+        try:
+            await self._session.send_realtime_input(
+                audio=types.Blob(mime_type=f"audio/pcm;rate={sample_rate}", data=pcm)
+            )
+        except Exception:  # noqa: BLE001 — ws closed; receive loop reconnects
+            log.debug("send_audio dropped (connection closed)")
 
     async def send_text(self, text: str) -> None:
         """Push a text instruction to the live session (proactive planner trigger)."""

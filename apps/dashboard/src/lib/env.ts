@@ -46,15 +46,23 @@ export function getServerEnv(): Env {
  * Public env (NEXT_PUBLIC_* only). Safe to read in the browser. Use this in
  * client components instead of reading process.env directly — it validates.
  */
-export function getPublicEnv(): { livekitUrl: string } {
-  const url = process.env.NEXT_PUBLIC_LIVEKIT_URL;
+export function getPublicEnv(): { livekitUrl: string; workerHealthUrl: string } {
+  const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
+  const workerHealthUrl = process.env.NEXT_PUBLIC_WORKER_HEALTH_URL;
   const parsed = z
-    .string()
-    .url()
-    .refine((v) => v.startsWith("ws"))
-    .safeParse(url);
+    .object({
+      livekitUrl: z
+        .string()
+        .url()
+        .refine((v) => v.startsWith("ws")),
+      workerHealthUrl: z
+        .string()
+        .url()
+        .refine((v) => v.startsWith("http")),
+    })
+    .safeParse({ livekitUrl, workerHealthUrl });
   if (!parsed.success) {
-    throw new Error("NEXT_PUBLIC_LIVEKIT_URL missing or invalid in client env");
+    throw new Error("NEXT_PUBLIC_LIVEKIT_URL or NEXT_PUBLIC_WORKER_HEALTH_URL missing/invalid");
   }
-  return { livekitUrl: parsed.data };
+  return parsed.data;
 }

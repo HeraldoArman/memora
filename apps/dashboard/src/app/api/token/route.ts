@@ -1,4 +1,4 @@
-import { AccessToken, RoomAgentDispatch, RoomConfiguration } from "livekit-server-sdk";
+import { AccessToken, LiveKitAPI } from "livekit-server-sdk";
 import { NextResponse } from "next/server";
 import { getServerEnv } from "@/lib/env";
 
@@ -8,6 +8,7 @@ import { getServerEnv } from "@/lib/env";
 // an agent dispatch). Add auth before exposing the dashboard publicly.
 
 const DEFAULT_IDENTITY = "dummy-device";
+const AGENT_NAME = "memora-agent";
 
 function uniqueRoom(): string {
   // memora-<timestamp>-<rand> — unique enough for local dev; collides are harmless
@@ -50,10 +51,19 @@ export async function POST(request: Request) {
     canSubscribe: true,
     canPublishData: true,
   });
-  at.roomConfig = new RoomConfiguration({
-    agents: [new RoomAgentDispatch({ agentName: "memora-agent" })],
-  });
 
   const token = await at.toJwt();
+
+  // Explicitly dispatch the agent to the room — RoomAgentDispatch in the token's
+  // roomConfig only works with LiveKit Cloud dispatch rules pre-configured. Calling
+  // LiveKitAPI.agentDispatch.createDispatch directly is reliable for both Cloud and self-hosted.
+  const httpUrl = serverUrl.replace("wss://", "https://").replace("ws://", "http://");
+  const api = new LiveKitAPI({ host: httpUrl, apiKey, secret: apiSecret });
+  try {
+    await api.agentDispatch.createDispatch(roomName, AGENT_NAME);
+  } catch (err) {
+    console.error("[token] agent dispatch failed:", err);
+  }
+
   return NextResponse.json({ server_url: serverUrl, token, room_name: roomName, identity });
 }
