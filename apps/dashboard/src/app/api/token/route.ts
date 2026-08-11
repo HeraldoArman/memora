@@ -60,9 +60,10 @@ export async function POST(request: Request) {
   const httpUrl = serverUrl.replace("wss://", "https://").replace("ws://", "http://");
   const api = new LiveKitAPI({ host: httpUrl, apiKey, secret: apiSecret });
   try {
-    await api.agentDispatch.createDispatch(roomName, AGENT_NAME);
+    const dispatch = await api.agentDispatch.createDispatch(roomName, AGENT_NAME);
+    console.log("[token] agent dispatch created:", dispatch.id, "room:", roomName);
   } catch (err) {
-    console.error("[token] agent dispatch failed:", err);
+    console.error("[token] agent dispatch failed:", err instanceof Error ? err.message : err);
   }
 
   return NextResponse.json({ server_url: serverUrl, token, room_name: roomName, identity });
