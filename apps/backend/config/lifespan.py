@@ -6,10 +6,14 @@ Neo4j driver → FAISS index load. Shutdown reverses it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from env import get_settings
 from fastapi import FastAPI
 from graph import client as neo4j_client
@@ -20,12 +24,26 @@ from postgres import session as pg_session
 log = logging.getLogger(__name__)
 
 
+def _upgrade_db() -> None:
+    """Idempotent `alembic upgrade head` — the app's own connection works on
+    Railway, so apply pending migrations at startup. Runs in a thread because
+    env.py calls asyncio.run() and needs its own loop."""
+    root = Path(__file__).resolve().parents[3]
+    cfg = Config()
+    cfg.set_main_option(
+        "script_location",
+        str(root / "packages/database/postgres/migrations"),
+    )
+    command.upgrade(cfg, "head")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
 
     # Postgres
     pg_session.init_engine(settings.database_url)
+    await asyncio.to_thread(_upgrade_db)
 
     # Neo4j
     await neo4j_client.init_driver(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)

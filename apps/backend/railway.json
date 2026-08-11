@@ -6,6 +6,6 @@
   },
   "deploy": {
     "startCommand": "uvicorn app:app --host 0.0.0.0 --port 8000 --app-dir apps/backend",
-    "preDeployCommand": ["sh", "-c", "cd packages/database && uv run alembic upgrade head"]
+    "preDeployCommand": []
   }
 }
