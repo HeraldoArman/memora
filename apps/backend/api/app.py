@@ -6,17 +6,22 @@ so `uvicorn app:app --app-dir apps/backend` finds it.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI
 
 from api.routes import health
 from config.lifespan import lifespan
 from config.logging import setup_logging
 
+log = logging.getLogger(__name__)
+
 
 def create_app() -> FastAPI:
     """Build the FastAPI app. Settings validation runs in lifespan; a missing
     required key raises a clear ValidationError at startup."""
     setup_logging()
+    log.info("create_app(): FastAPI assembly starting")
 
     app = FastAPI(
         title="Memora",
