@@ -11,6 +11,7 @@ to FACE_MODEL_ROOT on first init (needs network).
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 
 import numpy as np
@@ -19,6 +20,7 @@ from env import get_settings
 logger = logging.getLogger(__name__)
 
 _FACE_APP = None  # lazy singleton
+_FACE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -31,23 +33,26 @@ class DetectedFace:
 
 
 def _load_app():
-    """Initialize InsightFace FaceAnalysis once (lazy)."""
+    """Initialize InsightFace FaceAnalysis once (lazy). Thread-safe via lock."""
     global _FACE_APP
     if _FACE_APP is not None:
         return _FACE_APP
-    from insightface.app import FaceAnalysis
+    with _FACE_LOCK:
+        if _FACE_APP is not None:
+            return _FACE_APP
+        from insightface.app import FaceAnalysis
 
-    settings = get_settings()
-    logger.info("loading insightface buffalo_l (CPU, lazy) from %s", settings.face_model_root)
-    app = FaceAnalysis(
-        name="buffalo_l",
-        root=settings.face_model_root,
-        providers=["CPUExecutionProvider"],
-    )
-    app.prepare(ctx_id=-1, det_size=(640, 640))
-    _FACE_APP = app
-    logger.info("insightface ready")
-    return app
+        settings = get_settings()
+        logger.info("loading insightface buffalo_l (CPU, lazy) from %s", settings.face_model_root)
+        app = FaceAnalysis(
+            name="buffalo_l",
+            root=settings.face_model_root,
+            providers=["CPUExecutionProvider"],
+        )
+        app.prepare(ctx_id=-1, det_size=(640, 640))
+        _FACE_APP = app
+        logger.info("insightface ready")
+        return app
 
 
 def preload() -> None:

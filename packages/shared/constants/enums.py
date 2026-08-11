@@ -78,6 +78,7 @@ class ToolName(StrEnum):
 
     # Person
     SEARCH_PERSON = "search_person"
+    GET_PERSON = "get_person"
     SEARCH_PERSON_BY_FACE = "search_person_by_face"
     REGISTER_PERSON = "register_person"
     REGISTER_FACE = "register_face"

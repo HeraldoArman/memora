@@ -23,6 +23,17 @@ async def search_person(args: dict, ctx: ToolContext) -> dict:
     return {"results": hits}
 
 
+async def get_person(args: dict, ctx: ToolContext) -> dict:
+    """Get a person's full profile: name, notes, and relationships (LIKES, WORKS_AT, etc.)."""
+    person_id = args.get("person_id")
+    if not person_id:
+        return {"error": "person_id required"}
+    person = await ctx.person_service.get_person(person_id)
+    if person is None:
+        return {"error": "person not found"}
+    return {"person": person}
+
+
 async def search_person_by_face(args: dict, ctx: ToolContext) -> dict:
     """Identify the currently visible person via the face index.
 
@@ -107,6 +118,7 @@ async def update_person(args: dict, ctx: ToolContext) -> dict:
 # name → callable, for the registry.
 PERSON_TOOL_FUNCS = {
     "search_person": search_person,
+    "get_person": get_person,
     "search_person_by_face": search_person_by_face,
     "register_person": register_person,
     "register_face": register_face,
