@@ -57,8 +57,8 @@ class Settings(BaseSettings):
     # === FAISS ===
     faiss_index_path: str = "data/face_index.faiss"
     face_embedding_dim: int = 512
-    face_match_threshold: float = 0.80
-    face_possible_match_threshold: float = 0.60
+    face_match_threshold: float = 0.50
+    face_possible_match_threshold: float = 0.35
 
     # === InsightFace ===
     face_model_root: str = "models/insightface"

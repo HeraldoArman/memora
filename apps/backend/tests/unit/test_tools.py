@@ -170,11 +170,12 @@ class TestPersonTools:
     async def test_register_face_happy(self) -> None:
         ctx = _face_ctx()
         ctx.person_service.register_face = AsyncMock(return_value=3)
-        assert await per.register_face({"person_id": "p1"}, ctx) == {
-            "person_id": "p1",
-            "enrolled": True,
-            "face_index_row": 3,
-        }
+        result = await per.register_face({"person_id": "p1"}, ctx)
+        assert result["person_id"] == "p1"
+        assert result["enrolled"] is True
+        assert result["face_index_row"] == 3
+        # persisted=False is expected — no DB in unit tests
+        assert result["persisted"] is False
 
     async def test_update_person(self) -> None:
         ctx = _ctx()

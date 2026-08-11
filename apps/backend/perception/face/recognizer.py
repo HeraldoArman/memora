@@ -65,7 +65,7 @@ class FaceRecognizer:
     when moving to a GPU worker (interface stays identical)."""
 
     def detect_and_embed(
-        self, img: np.ndarray, *, max_num: int = 0, min_det_score: float = 0.5
+        self, img: np.ndarray, *, max_num: int = 0, min_det_score: float = 0.3
     ) -> list[DetectedFace]:
         """Detect faces in img (BGR uint8 HxWx3). Returns [] if none. max_num=0 → all.
 

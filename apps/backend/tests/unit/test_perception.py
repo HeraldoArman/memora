@@ -68,7 +68,7 @@ class TestFuse:
         assert ctx.visible_people == ["Asep", "Orang tidak dikenali"]
 
     def test_possible_match_surfaced_as_maybe(self) -> None:
-        """FAISS possible match (0.60-0.80) surfaces as 'Mungkin <name>' not 'Orang tidak dikenali'."""
+        """FAISS possible match (0.35-0.50) surfaces as 'Mungkin <name>' not 'Orang tidak dikenali'."""
         ctx = fuse(
             [FaceObservation(person_id="p3", name="Budi", confidence=0.7, is_possible_match=True)]
         )

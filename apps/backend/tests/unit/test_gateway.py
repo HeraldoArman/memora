@@ -23,7 +23,7 @@ from tools import ToolContext
 
 
 def _face_repo() -> FaceRepository:
-    repo = FaceRepository(FaceIndex(dim=8), known_threshold=0.80, possible_threshold=0.60)
+    repo = FaceRepository(FaceIndex(dim=8), known_threshold=0.50, possible_threshold=0.35)
     v = np.zeros(8, dtype=np.float32)
     v[0] = 1.0
     repo.register(v, "person-1")
@@ -207,16 +207,16 @@ class TestLookupFace:
         assert not obs.is_known and not obs.is_possible_match
 
     async def test_possible_match_resolves_name(self) -> None:
-        """FAISS possible match (0.60-0.80) resolves the name so fuse() can surface 'Mungkin <name>'."""
+        """FAISS possible match (0.35-0.50) resolves the name so fuse() can surface 'Mungkin <name>'."""
         repo = _face_repo()
         v = np.zeros(8, dtype=np.float32)
         v[0] = 1.0
-        # Partial match: 0.7 cosine similarity (above 0.60 possible, below 0.80 known)
-        # After L2 normalization the first component must be 0.7, so the second
-        # is sqrt(1 - 0.7^2) ≈ 0.714.
+        # Partial match: 0.42 cosine similarity (above 0.35 possible, below 0.50 known)
+        # After L2 normalization the first component must be 0.42, so the second
+        # is sqrt(1 - 0.42^2) ≈ 0.9075.
         partial = np.zeros(8, dtype=np.float32)
-        partial[0] = 0.7
-        partial[1] = float(np.sqrt(1 - 0.7**2))
+        partial[0] = 0.42
+        partial[1] = float(np.sqrt(1 - 0.42**2))
         with patch("graph.repository.PersonRepo") as mock_repo_cls:
             mock_repo_cls.return_value.get_person = AsyncMock(return_value={"name": "Asep"})
             obs = await _lookup_face(partial, repo)

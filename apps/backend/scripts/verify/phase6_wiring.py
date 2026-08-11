@@ -69,7 +69,7 @@ class _FakeFaceRepo:
         return "p1"
 
     @classmethod
-    def load(cls, path, *, known_threshold=0.8, possible_threshold=0.6):
+    def load(cls, path, *, known_threshold=0.5, possible_threshold=0.35):
         return cls()
 
 

@@ -48,8 +48,8 @@ class TestSettingsValidation:
 class TestSettingsDefaults:
     def test_defaults(self, settings) -> None:
         assert settings.face_embedding_dim == 512
-        assert settings.face_match_threshold == 0.80
-        assert settings.face_possible_match_threshold == 0.60
+        assert settings.face_match_threshold == 0.50
+        assert settings.face_possible_match_threshold == 0.35
         assert settings.observation_fusion_window_ms == 1000
         assert settings.observation_ttl_ms == 5000
         assert settings.max_context_age_ms == 30000

@@ -238,15 +238,17 @@ class TestFaceService:
     def test_lookup_orthogonal_unknown(self) -> None:
         svc = FaceService(FaceRepository(FaceIndex(512)))
         svc.register(_vec(0), "A")
-        out = svc.lookup(_vec(1))  # orthogonal → cosine 0.0 < 0.60
+        out = svc.lookup(_vec(1))  # orthogonal → cosine 0.0 < 0.35
         assert out["known"] is False and out["possible"] is False
         assert out["person_id"] is None
 
     def test_lookup_midway_possible(self) -> None:
         svc = FaceService(FaceRepository(FaceIndex(512)))
         svc.register(_vec(0), "A")
-        mid = (_vec(0) + _vec(1)).astype(np.float32)
-        mid /= np.linalg.norm(mid)  # 45° → cosine ≈ 0.707 ∈ [0.60, 0.80)
+        # cosine ≈ 0.42 ∈ [0.35, 0.50) — possible match zone
+        mid = np.zeros(512, dtype=np.float32)
+        mid[0] = 0.42
+        mid[1] = float(np.sqrt(1 - 0.42**2))
         out = svc.lookup(mid)
         # possible still identifies the best candidate person, just below known threshold
         assert out["possible"] is True and out["known"] is False
