@@ -28,8 +28,26 @@ from env import get_settings  # noqa: E402
 
 from postgres import session as pg_session  # noqa: E402
 
-# Head revision from packages/database/postgres/migrations/versions/.
-HEAD_REVISION = "89310c8b2c74"
+
+def _head_revision() -> str:
+    """Current alembic head, derived from the migrations dir (never goes stale).
+
+    Hardcoding the head revision meant every new migration silently broke this
+    check until someone remembered to bump the constant. Reading it from the
+    versions dir via ScriptDirectory makes the assert self-updating.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    # apps/backend/scripts/verify/migration.py → repo root (parents[4]) → packages/database
+    repo_root = Path(__file__).resolve().parents[4]
+    migrations = repo_root / "packages" / "database" / "postgres" / "migrations"
+    cfg = Config()
+    cfg.set_main_option("script_location", str(migrations))
+    return ScriptDirectory.from_config(cfg).get_current_head()
+
+
+HEAD_REVISION = _head_revision()
 
 EXPECTED_TABLES = {
     "conversation_sessions",
@@ -41,6 +59,8 @@ EXPECTED_TABLES = {
     "shopping_items",
     "settings",
     "system_logs",
+    "memory_facts",
+    "face_embeddings",
     "alembic_version",
 }
 

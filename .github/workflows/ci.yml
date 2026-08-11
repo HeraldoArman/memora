@@ -64,10 +64,37 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Sync Python workspace
-        run: uv sync --locked
+        run: uv sync --locked --all-packages
 
       - name: Build Python packages
         run: bunx nx run-many -t build --exclude=tag:firmware
+
+  unit-test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    env:
+      # dummy values satisfy Settings validation (no live services needed)
+      LIVEKIT_URL: wss://ci.livekit.cloud
+      LIVEKIT_API_KEY: dummy
+      LIVEKIT_API_SECRET: dummy
+      GEMINI_API_KEY: dummy
+      DATABASE_URL: postgresql://postgres:password@localhost:5432/memora
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: memora123
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Sync Python workspace
+        run: uv sync --locked --all-packages
+
+      - name: Run unit tests
+        run: uv run pytest apps/backend/tests/unit/
 
   migration-test:
     name: Migration Test
@@ -105,7 +132,7 @@ jobs:
           enable-cache: true
 
       - name: Sync Python workspace
-        run: uv sync --locked
+        run: uv sync --locked --all-packages
 
       - name: Run migrations (alembic upgrade head)
         working-directory: packages/database
@@ -164,7 +191,7 @@ jobs:
           enable-cache: true
 
       - name: Sync Python workspace
-        run: uv sync --locked
+        run: uv sync --locked --all-packages
 
       - name: Run migrations (alembic upgrade head)
         working-directory: packages/database
@@ -173,6 +200,9 @@ jobs:
       - name: Run DB integration test (Postgres + Neo4j + FAISS)
         working-directory: apps/backend
         run: uv run python scripts/verify/db_integration.py
+
+      - name: Run service integration tests (pytest)
+        run: uv run pytest apps/backend/tests/integration/
 
   docker-build:
     name: Docker Build
@@ -190,5 +220,41 @@ jobs:
           file: apps/backend/Dockerfile
           push: false
           tags: memora-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  dashboard-build:
+    name: Dashboard Build
+    runs-on: ubuntu-latest
+    env:
+      # dummy values satisfy the dashboard zod env validation at build time
+      LIVEKIT_URL: wss://ci.livekit.cloud
+      LIVEKIT_API_KEY: dummy
+      LIVEKIT_API_SECRET: dummy
+      NEXT_PUBLIC_LIVEKIT_URL: wss://ci.livekit.cloud
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install JS deps
+        run: bun install --frozen-lockfile
+
+      - name: Build dashboard (Next.js standalone)
+        run: bunx nx build dashboard
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build dashboard image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/dashboard/Dockerfile
+          push: false
+          tags: memora-dashboard:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max

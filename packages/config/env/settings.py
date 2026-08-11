@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = "INFO"
 
+    # === Locale ===
+    # IANA tz for local-day windows (reminders, schedules). Indonesia is UTC+7.
+    local_timezone: str = "Asia/Jakarta"
+
 
 @lru_cache
 def get_settings() -> Settings:

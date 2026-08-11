@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from schemas.extraction import EXTRACTION_SCHEMA
+from schemas.scene import SCENE_SCHEMA
 from schemas.tools import (
     ALL_FUNCTION_DECLARATIONS,
     CALENDAR_TOOLS,
@@ -26,6 +27,7 @@ __all__ = [
     "OBSERVATION_TOOLS",
     "PERSON_TOOLS",
     "REMINDER_TOOLS",
+    "SCENE_SCHEMA",
     "SYSTEM_TOOLS",
     "TOOLS_BLOCK",
 ]

@@ -8,7 +8,8 @@ Resolved against the PRDs (which disagree across layers):
   ATTENDS chosen over ATTENDED (present tense); LOCATED_AT added (already used in the PRD
   example graph but unlisted in the storage table — PRD omission).
 - ToolName: union of tool_api.md (canonical, 22) + reasoning_agent.md extras (create_event,
-  search_schedule, shopping_list). register_face ≈ register_person; kept register_person as canonical.
+  search_schedule, shopping_list). register_face enrolls the visible face against an existing
+  person (tool_api.md) — distinct from register_person (create the person node).
 """
 
 from __future__ import annotations
@@ -79,6 +80,7 @@ class ToolName(StrEnum):
     SEARCH_PERSON = "search_person"
     SEARCH_PERSON_BY_FACE = "search_person_by_face"
     REGISTER_PERSON = "register_person"
+    REGISTER_FACE = "register_face"
     UPDATE_PERSON = "update_person"
     # Memory
     SEARCH_MEMORY = "search_memory"

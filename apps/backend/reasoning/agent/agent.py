@@ -26,11 +26,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from context.engine import ContextEngine
 from dto.observations import CurrentContext
+from memory.retrieval.retriever import Retriever
 from reasoning.response.display import Display
 from reasoning.response.speaker import Speaker
 from reasoning.session.live_session import GeminiLiveSession
@@ -52,15 +53,28 @@ class ReasoningAgent:
         speaker: Speaker | None = None,
         display: Display | None = None,
         on_extract: Callable[[str], Any] | None = None,
+        emit_observation: Callable[[object], Awaitable[None]] | None = None,
+        planner=None,
+        text_embedder=None,
+        text_index=None,
     ) -> None:
         self.room = room
         self.ctx = tool_ctx
-        self.engine = engine or ContextEngine()
+        self.engine = engine or ContextEngine(
+            retriever=Retriever(text_embedder=text_embedder, text_index=text_index)
+            if text_embedder is not None
+            else None,
+        )
         self.session = session or GeminiLiveSession()
         self.speaker = speaker or Speaker()
         self.display = display or Display(room)
         # on_extract(turn_text) — pipeline consolidation hook, set by gateway.
         self.on_extract = on_extract
+        # emit_observation(obs) — observation feed (ObservationEngine.emit). Final speech
+        # transcripts become SpeechObservations so extraction sees the conversation.
+        self.emit_observation = emit_observation
+        # proactive planner — periodic context-vs-reminder checker.
+        self.planner = planner
         self._connected = False
 
     async def start(self, current: CurrentContext | None = None) -> None:
@@ -88,6 +102,10 @@ class ReasoningAgent:
         self.speaker.publish(self.room)
         self.session.start_receive()
         self._connected = True
+
+        # 4. start proactive planner if wired
+        if self.planner is not None:
+            self.planner.start(self._get_context, self._on_proactive)
         log.info("reasoning agent started")
 
     async def _on_turn(self) -> None:
@@ -111,11 +129,22 @@ class ReasoningAgent:
     async def _on_transcription(self, text: str, is_final: bool) -> None:
         """Input speech transcription → observation feed (decision #3: continuous, not turn).
 
-        The gateway/working memory owns writing this into the CurrentContext; here we
-        just log at debug. Ponytail: no separate transcription store — it folds into the
-        rolling speech transcript the perception layer maintains.
+        Final transcripts are emitted as SpeechObservations into Working Memory via the
+        emit_observation hook (set by the gateway to ObservationEngine.emit). Fuse only
+        folds is_final=True into CurrentContext.speech, so interim is skipped to avoid
+        noise. Extraction reads ctx.speech at turn boundaries — final-only is sufficient.
         """
         log.debug("transcription: %r (final=%s)", text, is_final)
+        if not is_final or not text.strip():
+            return
+        if self.emit_observation is None:
+            return
+        from dto.observations import SpeechObservation
+
+        try:
+            await self.emit_observation(SpeechObservation(transcript=text, confidence=0.9))
+        except Exception:  # noqa: BLE001 — observation failure must not kill the receive loop
+            log.exception("emit speech observation failed")
 
     async def feed_video(self, jpeg: bytes) -> None:
         """Perception sampler pushes a frame here (≤1 FPS)."""
@@ -136,11 +165,25 @@ class ReasoningAgent:
         self.ctx.current_context = current
 
     async def stop(self) -> None:
+        if self.planner is not None:
+            await self.planner.stop()
         if self._connected:
             await self.session.aclose()
             await self.speaker.aclose()
         self._connected = False
         log.info("reasoning agent stopped")
+
+    def _get_context(self) -> CurrentContext | None:
+        """Return the latest Working Memory snapshot for the planner."""
+        return self.ctx.current_context
+
+    async def _on_proactive(self, text: str) -> None:
+        """Planner trigger → inject text into the live session."""
+        try:
+            await self.session.send_text(text)
+            log.info("proactive prompt sent: %s", text[:80])
+        except Exception:  # noqa: BLE001
+            log.exception("proactive prompt failed")
 
 
 # --- self-check: wiring (no live connection, no network) ---
@@ -162,6 +205,8 @@ def _self_check() -> None:  # pragma: no cover
     speaker.aclose = AsyncMock()
     display = MagicMock()
     display.show = AsyncMock()
+    emitted: list = []
+    emit_observation = AsyncMock(side_effect=lambda obs: emitted.append(obs))
 
     agent = ReasoningAgent(
         room=room,
@@ -170,6 +215,7 @@ def _self_check() -> None:  # pragma: no cover
         session=session,
         speaker=speaker,
         display=display,
+        emit_observation=emit_observation,
     )
 
     asyncio.run(agent.start(current=None))
@@ -185,9 +231,17 @@ def _self_check() -> None:  # pragma: no cover
     session.start_receive.assert_called_once()
     assert agent._connected
 
+    # final transcription → SpeechObservation emitted; interim + empty skipped
+    asyncio.run(agent._on_transcription("apa ini?", is_final=True))
+    asyncio.run(agent._on_transcription("apa ini?", is_final=False))
+    asyncio.run(agent._on_transcription("   ", is_final=True))
+    assert len(emitted) == 1, emitted
+    assert emitted[0].transcript == "apa ini?" and emitted[0].is_final
+    assert type(emitted[0]).__name__ == "SpeechObservation"
+
     asyncio.run(agent.stop())
     assert not agent._connected
-    print("agent self-check OK: context→connect→speaker→receive wiring verified")
+    print("agent self-check OK: context→connect→speaker→receive→speech-obs wiring verified")
 
 
 if __name__ == "__main__":  # pragma: no cover

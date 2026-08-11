@@ -17,21 +17,29 @@ COPY packages/database/pyproject.toml packages/database/
 COPY packages/shared/pyproject.toml packages/shared/
 COPY packages/config/pyproject.toml packages/config/
 
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-install-project --package memora-backend
+RUN uv sync --locked --no-install-project --package memora-backend
 
 # Copy source, install project + workspace members.
 COPY apps/backend apps/backend
 COPY packages packages
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --package memora-backend
+RUN uv sync --locked --package memora-backend
 
-FROM python:3.12-slim-trixie
+FROM python:3.12-slim-trixie AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 COPY --from=builder --chown=nonroot:nonroot /app /app
+
+# Pre-fetch InsightFace buffalo_l weights (~300MB) so runtime doesn't download
+# on first face detection. InsightFace expects them at {FACE_MODEL_ROOT}/models/buffalo_l/.
+RUN apt-get update && apt-get install -y --no-install-recommends unzip ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app/models/insightface/models \
+    && curl -fsSL -o /tmp/buffalo_l.zip \
+       "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip" \
+    && unzip -q /tmp/buffalo_l.zip -d /app/models/insightface/models/buffalo_l \
+    && rm /tmp/buffalo_l.zip
 
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "apps/backend"]

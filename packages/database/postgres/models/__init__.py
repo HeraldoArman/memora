@@ -6,6 +6,8 @@ an implicit single device; no multi-user auth.
 
 from postgres.models.conversation import ConversationMessage, ConversationSession, Transcript
 from postgres.models.event import Event
+from postgres.models.face_embedding import FaceEmbedding
+from postgres.models.fact import MemoryFact
 from postgres.models.reminder import Reminder
 from postgres.models.shopping import ShoppingItem, ShoppingList
 from postgres.models.system import Setting, SystemLog
@@ -14,6 +16,8 @@ __all__ = [
     "ConversationMessage",
     "ConversationSession",
     "Event",
+    "FaceEmbedding",
+    "MemoryFact",
     "Reminder",
     "Setting",
     "ShoppingItem",

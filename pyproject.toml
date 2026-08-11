@@ -15,7 +15,11 @@ memora-shared = { workspace = true }
 memora-config = { workspace = true }
 
 [dependency-groups]
-dev = ["ruff==0.16.1"]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff==0.16.1",
+]
 
 # Minimal, safety-first. Catch runtime errors, not style nits.
 [tool.ruff]
@@ -37,3 +41,14 @@ known-first-party = ["api", "gateway", "perception", "context", "extraction", "p
 
 [tool.ruff.format]
 docstring-code-format = true
+
+# Flat layout: apps/backend + packages/ are top-level python dirs, not installed
+# as editable in CI. pytest needs them on sys.path to import `gateway`, `postgres`,
+# `vector`, `dto`, etc.
+[tool.pytest.ini_options]
+testpaths = ["apps/backend/tests"]
+pythonpath = ["apps/backend", "packages/database", "packages/shared", "packages/config"]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires live Postgres + Neo4j (db:start up)",
+]

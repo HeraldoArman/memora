@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from dto.observations import FaceObservation
+from dto.observations import FaceObservation, SceneObservation
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +68,10 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
     video_stream = rtc.VideoStream(track)
     sampler = FrameSampler(video_stream)
     recognizer = FaceRecognizer()
+    from perception.face.tracker import FaceTracker
+
+    tracker = FaceTracker()
+    seen_tracks: set[int] = set()
 
     async def _video_loop() -> None:
         try:
@@ -75,12 +79,31 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
                 # 1. face identity path (deterministic; Gemini can't match a gallery)
                 try:
                     faces = recognizer.detect_and_embed(frame["bgr"])
-                    for f in faces:
-                        obs = await _lookup_face(f.embedding)
-                        if obs is not None:
-                            await session.observation_engine.emit(obs)
+                    for tid, f in _track_faces(tracker, faces):
+                        if tid not in seen_tracks:
+                            seen_tracks.add(tid)
+                            obs = await _lookup_face(f.embedding, session.face_repo)
+                            if obs is not None:
+                                await session.observation_engine.emit(obs)
                 except Exception:  # noqa: BLE001 — perception errors must not kill the loop
                     log.exception("face recognize failed")
+
+                # 1.5 scene understanding path (Gemini Vision, ~1 FPS)
+                try:
+                    su = getattr(session, "scene_understander", None)
+                    if su is not None:
+                        scene_data = await su.understand(frame["jpeg"])
+                        if scene_data and scene_data.get("location"):
+                            await session.observation_engine.emit(
+                                SceneObservation(
+                                    location=scene_data["location"],
+                                    objects=scene_data.get("objects", []),
+                                    activity=scene_data.get("activity"),
+                                    confidence=scene_data.get("confidence", 0.8),
+                                )
+                            )
+                except Exception:  # noqa: BLE001
+                    log.exception("scene understand failed")
 
                 # 2. Gemini Live video path (≤1 FPS, enforced by sampler)
                 try:
@@ -99,22 +122,48 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
     return task
 
 
-async def _lookup_face(embedding) -> FaceObservation | None:
-    """Identify an embedding via the face repository; emit a FaceObservation.
+def _track_faces(tracker, faces):
+    """Run faces through the tracker; return [(track_id, detection)] for all."""
+    return tracker.update(faces)
 
-    Ponytail: lazy import — the face repo pulls FAISS + settings. Returns None if the
-    repo isn't available (keeps the video loop alive if face infra fails). FaceRepository
-    is sync (faiss-cpu search is in-process); we keep the function async so callers can
-    `await` uniformly, but the lookup itself is not awaited.
+
+async def _lookup_face(embedding, face_repo) -> FaceObservation | None:
+    """Identify an embedding via the session's face repo; return a FaceObservation.
+
+    `face_repo` is the RoomSession's FaceRepository (built at session create — the worker
+    process doesn't run the FastAPI lifespan). None repo → no identity path (keeps the
+    video loop alive if face infra isn't wired). FaceRepository is sync (faiss-cpu search
+    is in-process); we keep the function async so callers can `await` uniformly.
     """
     try:
-        from vector.repository import FaceRepository
+        if face_repo is None:
+            log.debug("face repo not available; skipping identity lookup")
+            return None
+        result = face_repo.lookup(embedding)  # sync: faiss search is in-process
+        # Resolve person_id → name via the graph so fuse() can surface the person in
+        # CurrentContext.visible_people (it only adds known+named observations). Graph
+        # outage must NOT drop the observation — degrade to name=None and still emit.
+        name = None
+        if result.person_id and (result.is_known or result.is_possible):
+            try:
+                from graph import repository as graph_repo
 
-        repo = FaceRepository()
-        result = repo.lookup(embedding)  # sync: faiss search is in-process
+                profile = await graph_repo.PersonRepo().get_person(result.person_id)
+                if profile:
+                    name = profile.get("name")
+            except Exception:  # noqa: BLE001
+                log.warning("face name lookup failed for %s; keeping name=None", result.person_id)
+        log.info(
+            "face lookup: %s name=%s score=%.3f known=%s possible=%s",
+            result.person_id or "unknown",
+            name,
+            result.score,
+            result.is_known,
+            result.is_possible,
+        )
         return FaceObservation(
             person_id=result.person_id,
-            name=None,  # name resolved downstream by PersonService if known
+            name=name,
             confidence=float(result.score),
             is_known=result.is_known,
             is_possible_match=result.is_possible,

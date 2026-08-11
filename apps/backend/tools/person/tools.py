@@ -7,7 +7,11 @@ logic here (that lives in services/).
 
 from __future__ import annotations
 
+import logging
+
 from tools.registry import ToolContext
+
+log = logging.getLogger(__name__)
 
 
 async def search_person(args: dict, ctx: ToolContext) -> dict:
@@ -32,12 +36,60 @@ async def search_person_by_face(args: dict, ctx: ToolContext) -> dict:
 
 
 async def register_person(args: dict, ctx: ToolContext) -> dict:
-    """Register a new person by name."""
+    """Register a new person by name.
+
+    If a conversation session is active, retroactively links orphan facts (extracted
+    before the person was identified) from this session to the new person_id — so
+    facts like "suka sushi" said before the name was spoken are not lost.
+    """
     name = args.get("name")
     if not name:
         return {"error": "name required"}
     node = await ctx.person_service.register_person(name=name)
+    person_id = node.get("person_id")
+    # Retroactively link orphan facts from the current conversation session to this person.
+    if person_id and ctx.session_id:
+        try:
+            from uuid import UUID
+
+            linked = await ctx.memory_service.link_facts_to_person(
+                session_id=UUID(ctx.session_id), person_id=person_id
+            )
+            if linked:
+                log.info("retroactively linked %d orphan fact(s) to %s", linked, person_id)
+        except Exception:  # noqa: BLE001
+            log.warning("retroactive fact link failed for %s", person_id)
     return {"person": node}
+
+
+async def register_face(args: dict, ctx: ToolContext) -> dict:
+    """Link the currently visible face to an existing person (enroll identity).
+
+    Uses the latest face embedding from Working Memory (the recognizer already ran). The
+    person must already exist (register_person first). FaceRepository.register is sync.
+    """
+    person_id = args.get("person_id")
+    if not person_id:
+        return {"error": "person_id required"}
+    emb = ctx.current_face_embedding()
+    if emb is None:
+        return {"person_id": person_id, "enrolled": False, "note": "no face detected"}
+    try:
+        row = await ctx.person_service.register_face(emb, person_id)
+    except RuntimeError as exc:  # face_repo not wired
+        return {"person_id": person_id, "enrolled": False, "note": str(exc)}
+    # Persist to Postgres (durable) + FAISS file (local cache). Postgres is the
+    # source of truth across backend + worker containers; the .faiss file is a
+    # local cache for dev/offline. Guarded so tests that stub the service don't crash.
+    try:
+        from postgres.repositories import FaceEmbeddingRepo
+        from postgres.session import get_sessionmaker
+
+        async with get_sessionmaker()() as db:
+            await FaceEmbeddingRepo().save(db, person_id=person_id, embedding=emb)
+    except Exception:  # noqa: BLE001 — DB unavailable shouldn't block enrollment
+        log.warning("face embedding persist to DB failed for %s", person_id)
+    return {"person_id": person_id, "enrolled": True, "face_index_row": row}
 
 
 async def update_person(args: dict, ctx: ToolContext) -> dict:
@@ -57,5 +109,6 @@ PERSON_TOOL_FUNCS = {
     "search_person": search_person,
     "search_person_by_face": search_person_by_face,
     "register_person": register_person,
+    "register_face": register_face,
     "update_person": update_person,
 }

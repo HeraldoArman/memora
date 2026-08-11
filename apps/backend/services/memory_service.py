@@ -8,20 +8,22 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from postgres.repositories import ConversationRepo, TranscriptRepo
+from postgres.repositories import ConversationRepo, FactRepo, TranscriptRepo
 from postgres.session import get_sessionmaker
 
 
 class MemoryService:
-    """Episodic recall over conversation sessions + transcripts."""
+    """Episodic recall over conversation sessions + transcripts + extracted facts."""
 
     def __init__(
         self,
         conversation_repo: ConversationRepo | None = None,
         transcript_repo: TranscriptRepo | None = None,
+        fact_repo: FactRepo | None = None,
     ) -> None:
         self.conversation_repo = conversation_repo or ConversationRepo()
         self.transcript_repo = transcript_repo or TranscriptRepo()
+        self.fact_repo = fact_repo or FactRepo()
 
     async def recent_memories(self, *, limit: int = 10) -> list[dict]:
         """Recent conversation summaries as lightweight memory records."""
@@ -65,3 +67,42 @@ class MemoryService:
                 db, session_id=session_id, role=role, content=content
             )
             return str(m.id)
+
+    async def add_facts(
+        self,
+        *,
+        facts: list[str],
+        session_id: UUID | None = None,
+        person_id: str | None = None,
+        confidence: float | None = None,
+        confidences: list[float] | None = None,
+    ) -> int:
+        """Persist extracted fact statements. No-op when empty.
+
+        `confidences` (per-fact) takes precedence over the scalar `confidence` — used
+        for the first-person provenance boost, which is per-fact, not per-turn.
+        """
+        if not facts:
+            return 0
+        sm = get_sessionmaker()
+        async with sm() as db:
+            return await self.fact_repo.add_many(
+                db,
+                facts=facts,
+                session_id=session_id,
+                person_id=person_id,
+                confidence=confidence,
+                confidences=confidences,
+            )
+
+    async def link_facts_to_person(self, *, session_id: UUID, person_id: str) -> int:
+        """Retroactively link orphan facts from the current conversation to a person.
+
+        Scoped to the last ~10 minutes so 24/7 sessions don't mix up facts from
+        different conversation partners throughout the day.
+        """
+        sm = get_sessionmaker()
+        async with sm() as db:
+            return await self.fact_repo.link_recent_orphan_facts(
+                db, session_id=session_id, person_id=person_id
+            )

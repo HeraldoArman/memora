@@ -1,0 +1,60 @@
+import { z } from "zod";
+
+// ponytail: single source of truth for dashboard env — validated once at import,
+// fails loudly (like the backend's get_settings()). No silent undefineds.
+
+const schema = z.object({
+  // server-side — used by /api/token to mint tokens. Never prefixed NEXT_PUBLIC_.
+  LIVEKIT_URL: z
+    .string()
+    .url("LIVEKIT_URL must be a valid ws/wss URL")
+    .refine((v) => v.startsWith("ws"), "LIVEKIT_URL must start with ws:// or wss://"),
+  LIVEKIT_API_KEY: z.string().min(1, "LIVEKIT_API_KEY is required"),
+  LIVEKIT_API_SECRET: z.string().min(1, "LIVEKIT_API_SECRET is required"),
+  // public — exposed to the browser so the client knows the server address.
+  NEXT_PUBLIC_LIVEKIT_URL: z
+    .string()
+    .url("NEXT_PUBLIC_LIVEKIT_URL must be a valid ws/wss URL")
+    .refine((v) => v.startsWith("ws"), "NEXT_PUBLIC_LIVEKIT_URL must start with ws:// or wss://"),
+});
+
+export type Env = z.infer<typeof schema>;
+
+let cached: Env | null = null;
+
+/**
+ * Server env (LIVEKIT_* keys). Cached after first validation. Throws with a
+ * readable message listing every missing/invalid key — never a silent undefined.
+ */
+export function getServerEnv(): Env {
+  if (cached) return cached;
+  const parsed = schema.safeParse({
+    LIVEKIT_URL: process.env.LIVEKIT_URL,
+    LIVEKIT_API_KEY: process.env.LIVEKIT_API_KEY,
+    LIVEKIT_API_SECRET: process.env.LIVEKIT_API_SECRET,
+    NEXT_PUBLIC_LIVEKIT_URL: process.env.NEXT_PUBLIC_LIVEKIT_URL,
+  });
+  if (!parsed.success) {
+    const msg = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+    throw new Error(`Dashboard env invalid — ${msg}`);
+  }
+  cached = parsed.data;
+  return cached;
+}
+
+/**
+ * Public env (NEXT_PUBLIC_* only). Safe to read in the browser. Use this in
+ * client components instead of reading process.env directly — it validates.
+ */
+export function getPublicEnv(): { livekitUrl: string } {
+  const url = process.env.NEXT_PUBLIC_LIVEKIT_URL;
+  const parsed = z
+    .string()
+    .url()
+    .refine((v) => v.startsWith("ws"))
+    .safeParse(url);
+  if (!parsed.success) {
+    throw new Error("NEXT_PUBLIC_LIVEKIT_URL missing or invalid in client env");
+  }
+  return { livekitUrl: parsed.data };
+}

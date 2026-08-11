@@ -36,7 +36,10 @@ async def entrypoint(ctx: JobContext) -> None:
     room = ctx.room
     log.info("job connected to room %s", room.name)
 
-    session = RoomSession.create(room)
+    # The worker is a separate process — it never runs the FastAPI lifespan, so Postgres +
+    # Neo4j are wired here before any session/turn touches them (extraction, face names).
+    await _init_stores()
+    session = await RoomSession.create(room)
     await session.start()
 
     # --- wire track + data handlers ---
@@ -68,6 +71,30 @@ async def entrypoint(ctx: JobContext) -> None:
     finally:
         await session.stop()
         log.info("room session torn down for %s", room.name)
+
+
+async def _init_stores() -> None:
+    """Wire Postgres + Neo4j for this worker process (lifespan never runs here).
+
+    Idempotent-safe: re-inits are cheap (pool + driver singleton). On DB outage the room
+    still runs — extraction + face-name lookup degrade gracefully to log-and-skip.
+    """
+    from env import get_settings
+    from graph import client as neo4j_client
+
+    from postgres import session as pg_session
+
+    settings = get_settings()
+    try:
+        pg_session.init_engine(settings.database_url)
+    except Exception:  # noqa: BLE001 — DB down → room runs, extraction degrades
+        log.exception("postgres init failed; memory persistence unavailable")
+    try:
+        await neo4j_client.init_driver(
+            settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("neo4j init failed; graph + face-name lookup unavailable")
 
 
 def build_worker_options() -> WorkerOptions:

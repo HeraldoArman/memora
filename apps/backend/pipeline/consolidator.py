@@ -18,14 +18,20 @@ from __future__ import annotations
 
 import logging
 
-from constants import MemoryCategory
+from constants import MemoryCategory, RelationshipType
 from extraction.classifier import classify, for_graph
 from extraction.normalizer import normalize
 from extraction.resolver import resolve_name
-from extraction.verifier import accepted, verify
+from extraction.verifier import accepted, first_person_boost, verify
 from services import KnowledgeService, MemoryService, PersonService
 
 logger = logging.getLogger(__name__)
+
+# Valid graph edge labels. LLM relationship strings are f-string'd into Cypher
+# (queries.add_relation_cypher), so reject anything outside this set before it
+# reaches the query builder — the schema enum constrains structured output, but
+# the json.loads fallback in extractor._parse can bypass it.
+_VALID_RELATIONSHIPS = {r.value for r in RelationshipType}
 
 
 class Consolidator:
@@ -37,10 +43,14 @@ class Consolidator:
         person_service: PersonService | None = None,
         knowledge_service: KnowledgeService | None = None,
         memory_service: MemoryService | None = None,
+        text_embedder=None,
+        text_index=None,
     ) -> None:
         self.person_service = person_service or PersonService()
         self.knowledge_service = knowledge_service or KnowledgeService()
         self.memory_service = memory_service or MemoryService()
+        self.text_embedder = text_embedder
+        self.text_index = text_index
 
     async def consolidate(
         self,
@@ -88,6 +98,12 @@ class Consolidator:
             obj = rel.get("object", "")
             if not subj or not rel_type or not obj:
                 continue
+            # Security: rel_type is interpolated into Cypher as the edge label.
+            # Drop unknown relationship types so LLM output (or the json.loads
+            # fallback path) can't inject an arbitrary label into the query.
+            if rel_type not in _VALID_RELATIONSHIPS:
+                logger.warning("rejecting unknown relationship type %r", rel_type)
+                continue
             subj_canon = resolve_name(subj)
             obj_canon = normalize(obj)
             if subj_canon not in person_ids:
@@ -124,10 +140,10 @@ class Consolidator:
                     "add_relation failed (%s -[%s]-> %s): %s", subj_canon, rel_type, obj_canon, e
                 )
 
+        from uuid import UUID
+
         # Persist the episode as a conversation message (episodic record).
         if session_id and content:
-            from uuid import UUID
-
             try:
                 await self.memory_service.add_message(
                     session_id=UUID(session_id), role="user", content=content
@@ -135,11 +151,44 @@ class Consolidator:
             except Exception as e:  # noqa: BLE001
                 logger.warning("episodic persist failed: %s", e)
 
+        # Persist extracted fact statements (raw strings → memory_facts). Confidence is
+        # per-fact: a first-person statement ("I'm Asep") gets the provenance boost, a
+        # third-person one ("Asep works at Tokopedia") does not — applying the boost to the
+        # whole turn over-credited facts the speaker wasn't asserting about themselves.
+        # If exactly one person was identified in this extraction, tag all facts with them.
+        # When no person is identified (unnamed conversation), facts are orphaned (person_id
+        # = NULL) and later linked retroactively when the person is identified.
+        facts = [str(f) for f in extraction.get("facts", [])]
+        fact_count = 0
+        if facts:
+            fact_confidences = [first_person_boost(confidence, f) for f in facts]
+            fact_person_id = next(iter(person_ids.values())) if len(person_ids) == 1 else None
+            try:
+                fact_count = await self.memory_service.add_facts(
+                    facts=facts,
+                    session_id=UUID(session_id) if session_id else None,
+                    person_id=fact_person_id,
+                    confidences=fact_confidences,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("fact persist failed: %s", e)
+
+            # Embed facts into the text index for semantic retrieval (graceful if unwired)
+            if self.text_embedder is not None and self.text_index is not None:
+                try:
+                    embeddings = await self.text_embedder.embed_batch(facts)
+                    for fact_text, emb in zip(facts, embeddings, strict=False):
+                        if emb is not None:
+                            self.text_index.add(emb, fact_text)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("fact embedding failed: %s", e)
+
         return {
             "action": "create",
             "level": level.value,
             "entities": entity_count,
             "relationships": rel_count,
+            "facts": fact_count,
             "person_ids": person_ids,
         }
 
@@ -180,7 +229,9 @@ def _self_check() -> None:  # pragma: no cover
             {"subject": "Asep", "relationship": "WORKS_AT", "object": "Tokopedia"},
             {"subject": "Asep", "relationship": "LIKES", "object": "sushi"},
         ],
+        "facts": ["Asep likes sushi", "Asep works at Tokopedia"],
     }
+    c2.memory_service.add_facts = AsyncMock(return_value=2)
     out = asyncio.run(
         c2.consolidate(extraction, content="I'm Asep, I work at Tokopedia, I like sushi")
     )
@@ -190,7 +241,17 @@ def _self_check() -> None:  # pragma: no cover
     assert out["person_ids"]["Asep"] == "pid1", out
     # sushi (Food) → Preference graph category
     assert c2.knowledge_service.upsert_entity.call_args_list[-1].kwargs["category"] == "Preference"
-    print(f"consolidator self-check OK: {out['entities']} entities, {out['relationships']} rels")
+    # facts persisted with per-fact confidence (first-person boost applied per fact)
+    assert out["facts"] == 2, out
+    c2.memory_service.add_facts.assert_awaited_once()
+    call = c2.memory_service.add_facts.await_args.kwargs
+    assert call["facts"] == ["Asep likes sushi", "Asep works at Tokopedia"], call
+    assert call["confidences"] == [0.95, 0.95], call  # neither fact is first-person
+    assert "confidence" not in call or call.get("confidence") is None, call
+    print(
+        f"consolidator self-check OK: {out['entities']} entities, "
+        f"{out['relationships']} rels, {out['facts']} facts"
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

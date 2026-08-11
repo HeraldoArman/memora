@@ -20,7 +20,9 @@ async def create_event(args: dict, ctx: ToolContext) -> dict:
     title = args.get("title")
     if not title:
         return {"error": "title required"}
-    starts_at = _parse_dt(args.get("starts_at")) or datetime.now()
+    starts_at = _parse_dt(args.get("starts_at"))
+    if starts_at is None:
+        return {"error": "starts_at required (ISO 8601)"}
     return await ctx.event_service.create(
         title=title,
         starts_at=starts_at,

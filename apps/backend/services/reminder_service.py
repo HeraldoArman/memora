@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from uuid import UUID
 
+from env import get_settings
+
 from postgres.repositories import ReminderRepo
 from postgres.session import get_sessionmaker
 from utils.time_ids import now_utc
@@ -51,7 +53,11 @@ class ReminderService:
         sm = get_sessionmaker()
         async with sm() as db:
             n = now or now_utc()
-            day_start = n.replace(hour=0, minute=0, second=0, microsecond=0)
+            # Local-day window, not UTC-day. Indonesia is UTC+7, so a UTC midnight
+            # window missed every reminder due local 00:00–06:59 for half the morning.
+            tz = _local_tz()
+            local_now = n.astimezone(tz) if n.tzinfo else n.replace(tzinfo=tz)
+            day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
             rs = await self.repo.due_today(db, day_start=day_start, day_end=day_end)
             return [_to_dict(r) for r in rs]
@@ -72,3 +78,10 @@ def _to_dict(r) -> dict:
         "completed": r.completed,
         "created_at": r.created_at.isoformat() if r.created_at else None,
     }
+
+
+def _local_tz():
+    """Cache the configured local timezone (resolved once from settings)."""
+    from zoneinfo import ZoneInfo
+
+    return ZoneInfo(get_settings().local_timezone)

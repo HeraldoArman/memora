@@ -49,6 +49,15 @@ PERSON_TOOLS = [
         },
     ),
     _decl(
+        ToolName.REGISTER_FACE,
+        "Hubungkan wajah yang terlihat dengan orang yang sudah ada. (Enroll the visible face to an existing person.)",
+        {
+            "type": "object",
+            "properties": {"person_id": _str_param("ID orang")},
+            "required": ["person_id"],
+        },
+    ),
+    _decl(
         ToolName.UPDATE_PERSON,
         "Perbarui informasi/catatan seseorang. (Update a person's profile/notes.)",
         {
@@ -110,7 +119,13 @@ REMINDER_TOOLS = [
         "Perbarui pengingat. (Update a reminder.)",
         {
             "type": "object",
-            "properties": {"reminder_id": _str_param("ID pengingat")},
+            "properties": {
+                "reminder_id": _str_param("ID pengingat"),
+                "title": _str_param("Judul pengingat"),
+                "due_at": _str_param("Waktu jatuh tempo ISO 8601"),
+                "note": _str_param("Catatan"),
+                "completed": {"type": "boolean", "description": "Tandai selesai"},
+            },
             "required": ["reminder_id"],
         },
     ),
@@ -158,7 +173,11 @@ KNOWLEDGE_TOOLS = [
     _decl(
         ToolName.SEARCH_PREFERENCES,
         "Preferensi pengguna. (User preferences.)",
-        {"type": "object", "properties": {"query": _str_param("Query preferensi")}},
+        {
+            "type": "object",
+            "properties": {"person_id": _str_param("ID orang")},
+            "required": ["person_id"],
+        },
     ),
     _decl(
         ToolName.RELATED_PEOPLE,
@@ -192,7 +211,7 @@ CALENDAR_TOOLS = [
                 "starts_at": _str_param("Mulai ISO 8601"),
                 "location": _str_param("Lokasi"),
             },
-            "required": ["title"],
+            "required": ["title", "starts_at"],
         },
     ),
     _decl(

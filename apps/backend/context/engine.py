@@ -56,8 +56,17 @@ class ContextEngine:
         visible = current.visible_people if current else []
         location = current.scene if current else None
 
-        candidates = await self.retriever.retrieve(query, visible_people=visible)
-        ranked = rank(candidates, query=query, visible_people=visible, location=location)
+        # Retrieval/ranking must never abort the build — degrade to the current snapshot.
+        candidates: list[dict] = []
+        try:
+            candidates = await self.retriever.retrieve(query, visible_people=visible)
+        except Exception as e:  # noqa: BLE001 — store outage → current-observation-only package
+            logger.warning("retrieval failed; building context from current snapshot only: %s", e)
+        try:
+            ranked = rank(candidates, query=query, visible_people=visible, location=location)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("ranking failed; using candidates unranked: %s", e)
+            ranked = [(c, 0.0, {}) for c in candidates]
 
         # Upcoming reminders as plain strings for the package.
         reminders: list[str] = []
@@ -80,8 +89,42 @@ class ContextEngine:
             top_k=top_k,
         )
         text = to_text(pkg, activity=current.activity if current else None)
-        text = await self.summarizer.summarize(text)
+        try:
+            text = await self.summarizer.summarize(text)
+        except Exception as e:  # noqa: BLE001 — Gemini unavailable → send the raw package text
+            logger.warning("summarizer failed; sending unsummarized package: %s", e)
         return pkg, text
+
+
+# --- self-check: build degrades on store failure (no network/DB) ---
+def _self_check() -> None:  # pragma: no cover
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    engine = ContextEngine(
+        retriever=AsyncMock(),  # type: ignore[arg-type]
+        summarizer=AsyncMock(),  # type: ignore[arg-type]
+        reminder_service=AsyncMock(),  # type: ignore[arg-type]
+    )
+    engine.retriever.retrieve = AsyncMock(side_effect=RuntimeError("neo4j down"))
+    engine.reminder_service.upcoming = AsyncMock(
+        return_value=[
+            {"title": "minum obat", "due_at": "2026-08-10T09:00:00+00:00", "completed": False}
+        ]
+    )
+    engine.summarizer.summarize = AsyncMock(side_effect=RuntimeError("gemini down"))
+
+    async def _run() -> None:
+        ctx = CurrentContext(visible_people=["Asep"], scene="apotek", speech="Siapa ini?")
+        pkg, text = await engine.build(ctx, user_question="Siapa ini?")
+        # retrieval failed → still returns a package + non-empty rendered text
+        assert pkg is not None and text, (pkg, text)
+        assert "minum obat" in text, text  # reminders still folded in
+        return text
+
+    text = asyncio.run(_run())
+    print("context engine self-check OK: build degrades on retrieval+summarizer failure")
+    assert "Asep" in text or "apotek" in text, text  # current snapshot still rendered
 
 
 # --- __main__: Phase 5 verification ---
@@ -121,4 +164,7 @@ if __name__ == "__main__":  # pragma: no cover
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    asyncio.run(_verify())
+    _self_check()
+    # DB-backed Phase 5 verification — opt-in only (needs live Postgres + Neo4j).
+    if "--verify" in sys.argv:
+        asyncio.run(_verify())
