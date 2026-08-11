@@ -2,22 +2,40 @@
 
 - **Date:** 2026-08-11
 - **Service:** `backend` (FastAPI) — project `memora`, production env
-- **Status:** ROOT CAUSE NOT FOUND. Ongoing diagnostic (log-marker experiment in flight).
+- **Status:** RESOLVED (2026-08-11). Root cause: stale dashboard `preDeployCommand` not overridden by config-as-code.
 - **Branch:** `develop`
 
 ## TL;DR
 
-The `backend` service deploys from the `HeraldoArman/memora` GitHub repo on
-Railway. **Build always succeeds** — then the **deploy phase FAILs within
-~60–180s and the deploy logs are completely EMPTY.** No app output, no
-traceback, no uvicorn banner, no "Application startup failed". Every attempted
-fix (predeploy command, explicit start command, dropping predeploy) reproduced
-the same symptom: FAILED + empty logs.
+**Root cause found and fixed.** The `backend` service always FAILED deploy
+with empty logs because a stale `preDeployCommand: ["cd packages/database &&
+alembic upgrade head"]` was baked into the backend's **service settings**
+(dashboard layer) from commit `aec549f`. That alembic predeploy runs in a
+separate container before the app starts, hangs on `asyncpg`→Postgres TLS
+connect (~60s), then fails. Per Railway semantics, a failed predeploy aborts
+the deployment **before the app container starts** → deploy logs empty, status
+FAILED.
 
-Two sibling services built from the same repo and the same style of Dockerfile
-**deploy fine**: `dashboard` (Next.js) and `worker` (same backend image,
-different entrypoint). This rules out most config and image theories and points
-at something specific to the `backend` service on the Railway platform.
+Prior commits (`0bb0f51`, `6bc264b`) tried to fix this by editing
+`apps/backend/railway.json` (removing predeploy, adding startCommand) — but
+**config-as-code only overrides dashboard values for fields present in the
+file**. The file _omitted_ `preDeployCommand`, so Railway kept the stale
+dashboard value in the deployment manifest. Even clearing it via the API
+(`serviceInstanceUpdate`) updated the service-instance record but the
+deployment manifest still rendered the stale alembic command.
+
+**The fix:** one line — explicitly set `"preDeployCommand": []` in
+`apps/backend/railway.json` (commit `0f3a5c9`). The config file now forces the
+field empty, overriding the stale dashboard value. Deploy `44b61454` →
+**SUCCESS**, all 5 services green, `/health` 200, deploy logs populated.
+
+**Follow-up (worker regression):** the worker and backend both pointed to
+`apps/backend/railway.json`, so the backend's `startCommand` (uvicorn) was
+overriding the worker's dashboard `startCommand` via config-as-code — the
+worker was silently running the FastAPI backend instead of the LiveKit worker.
+Fixed by adding a per-service `apps/backend/railway.worker.json` and repointing
+the worker service's `configFile` to it (commit `fe632a3`). Worker deploy
+`88a231a2` → SUCCESS, now runs `python -m workers.livekit_worker start`.
 
 ---
 
@@ -187,63 +205,27 @@ apps/backend` verified working locally against the image layout (WORKDIR
 
 ---
 
-## Current diagnostic in flight
+## Resolved (2026-08-11)
 
-Commit in this working-tree change adds an explicit startup log **before app
-start**, in `apps/backend/api/app.py` `create_app()`:
+| Commit    | Change                                                              | Deploy result                                                       |
+| --------- | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `0f3a5c9` | Add `"preDeployCommand": []` to `apps/backend/railway.json`         | Deploy `44b61454` → **SUCCESS**. All 5 services green.              |
+| `fe632a3` | Add `apps/backend/railway.worker.json`, repoint worker `configFile` | Worker deploy `88a231a2` → **SUCCESS** (runs LiveKit, not uvicorn). |
 
-```python
-setup_logging()
-log.info("create_app(): FastAPI assembly starting")
-```
-
-`setup_logging()` already emits `logging configured (level=INFO...)` at import —
-but **those lines never appeared in Railway logs**. So the new marker is a
-binary test:
-
-- **If the marker appears in the deploy log** → the container _does_ run the
-  app; the emptiness was a logging/forwarding issue downstream. Keep digging
-  into startup.
-- **If the deploy log is STILL empty** → the container never executes our
-  process at all. Platform-level handoff problem specific to this service.
+**The actual root cause** (the thing all prior attempts missed): the stale
+`preDeployCommand` was in the **dashboard/service-settings layer**, and
+Railway's config-as-code only overrides dashboard values for fields _present
+in the file_. Omitting `preDeployCommand` from `railway.json` left the stale
+dashboard value active in the deployment manifest. The `get-service-config`
+API and the service-instance record both reported `preDeployCommand: []`
+after the API clear, but the **deployment manifest** (what actually runs)
+still rendered the stale alembic command — confirmed by reading
+`deployment.meta.serviceManifest.deploy.preDeployCommand` via GraphQL. Only
+adding the field explicitly to the config file overrode it.
 
 ---
 
-## Open hypotheses
-
-1. **Platform bug on the `backend` service object itself** (env/config/dataplane
-   state). Sibling services on the same repo/env are healthy; only this one
-   always fails pre-start. A fresh service + redeploy is one cheap test.
-2. **Stale/desynced service config** still running an old predeploy or a broken
-   start command — see observation above.
-3. **Image-provided ENV or entrypoint quirk** (unlikely; worker runs the same
-   image fine).
-4. **Healthcheck before readiness** — `/health` returning 503 during startup
-   (asyncpg connect to Postgres can take tens of seconds under Railway's TLS)
-   leading to restart-on-fail before first log flush. Healthcheck timeout is 60s.
-
----
-
-## Next steps
-
-1. **Commit + push the log-marker + this doc** to `develop` → triggers Railway
-   redeploy → poll new deployment, read deploy logs for
-   `create_app(): FastAPI assembly starting`.
-2. **Verify worker regression:** confirm whether the latest worker deployment is
-   actually running `python -m workers.livekit_worker start` or got hijacked into
-   `uvicorn` by the shared `railway.json` `startCommand`. If hijacked, move the
-   backend to a per-service config file (and/or use `railway.json` templates).
-3. **Re-verify config sync:** after next deploy, re-read
-   `get-service-config` and compare preDeployCommand/startCommand to the
-   committed `railway.json`.
-4. **If marker absent:** try replacing the service (empty service → same repo
-   source) to rule out a corrupted service object; or try the user-proposed
-   **GHCR pivot** (build image locally, push to GHCR, deploy image directly —
-   bypasses Railway's GitHub build + config-as-code entirely). Note: a GHCR
-   image deploy likely will NOT fix a pre-start platform failure, but it cleanly
-   eliminates Railway's build/handoff as a variable.
-5. **If marker present:** inspect post-marker startup logs (settings validation,
-   lifespan, DB/Neo4j connect, FAISS load) and the healthcheck path.
+## Earlier diagnostic writeup (kept for context)
 
 ---
 
