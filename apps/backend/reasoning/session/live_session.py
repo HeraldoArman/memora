@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -70,6 +71,14 @@ class GeminiLiveSession:
         self._max_backoff_s = 5.0
         # ponytail: pending prompts queued during reconnect; flushed on successful _open()
         self._pending_prompts: list[str] = []
+        # ponytail: pending audio buffered during INITIAL connect only; flushed on
+        # first _open(). On reconnect, audio is dropped (not buffered) to avoid
+        # flooding Gemini with stale audio that triggers feedback loops.
+        self._pending_audio: deque[bytes] = deque()
+        self._pending_audio_bytes: int = 0
+        self._pending_audio_cap: int = 320_000
+        self._pending_audio_rate: int = 16000
+        self._initial_connect_done: bool = False
         # ponytail: recent conversation turns for context re-injection on reconnect.
         # Gemini Live 1011 errors drop the WS and lose conversation context; re-injecting
         # the last few turns as a text prompt after reconnect lets the model pick up.
@@ -165,12 +174,28 @@ class GeminiLiveSession:
                 await self._session.send_realtime_input(text=p)
             log.info("flushed %d pending prompt(s)", len(self._pending_prompts))
             self._pending_prompts.clear()
-        # ponytail: re-inject recent conversation turns so the model doesn't lose context
-        # after a 1011 reconnect. Sent as a single text block before any new input.
-        if self._recent_turns:
-            summary = "Riwayat percakapan sebelumnya:\n" + "\n".join(self._recent_turns)
-            await self._session.send_realtime_input(text=summary)
-            log.info("re-injected %d recent turn(s) after reconnect", len(self._recent_turns))
+        # flush buffered audio only on initial connect — on reconnect, drop stale audio
+        # (flooding Gemini with 10s of old audio triggers spurious responses + feedback loops)
+        if self._pending_audio and not self._initial_connect_done:
+            rate = self._pending_audio_rate
+            total = sum(len(c) for c in self._pending_audio)
+            for chunk in self._pending_audio:
+                await self._session.send_realtime_input(
+                    audio=types.Blob(mime_type=f"audio/pcm;rate={rate}", data=chunk)
+                )
+            log.info(
+                "flushed %d pending audio chunk(s) (~%.1fs)",
+                len(self._pending_audio),
+                total / (rate * 2),
+            )
+            self._pending_audio.clear()
+            self._pending_audio_bytes = 0
+        elif self._pending_audio:
+            dropped = len(self._pending_audio)
+            self._pending_audio.clear()
+            self._pending_audio_bytes = 0
+            log.info("dropped %d stale audio chunk(s) on reconnect", dropped)
+        self._initial_connect_done = True
 
     def start_receive(self) -> asyncio.Task:
         """Spawn the receive loop as a background task.
@@ -342,8 +367,19 @@ class GeminiLiveSession:
             log.debug("send_video dropped (connection closed)")
 
     async def send_audio(self, pcm: bytes, *, sample_rate: int = 16000) -> None:
-        """Push an audio chunk (16-bit PCM) to the live session."""
+        """Push an audio chunk (16-bit PCM) to the live session.
+
+        Buffers chunks while _session is None (connect/reconnect window) and flushes
+        them on successful _open(), mirroring the _pending_prompts pattern for text.
+        """
         if self._session is None:
+            self._pending_audio_rate = sample_rate
+            self._pending_audio.append(pcm)
+            self._pending_audio_bytes += len(pcm)
+            # drop oldest chunks to stay under the byte cap
+            while self._pending_audio_bytes > self._pending_audio_cap and self._pending_audio:
+                old = self._pending_audio.popleft()
+                self._pending_audio_bytes -= len(old)
             return
         try:
             await self._session.send_realtime_input(
@@ -555,6 +591,76 @@ def _self_check() -> None:  # pragma: no cover
 
     asyncio.run(_check_reconnect())
     print("live_session self-check OK: reconnect loop restores session after drop")
+
+    # --- audio buffering during connect/reconnect window ---
+    async def _check_audio_buffer() -> None:
+        import contextlib
+
+        sent_audio: list[bytes] = []
+
+        class _BufSession:
+            async def send_realtime_input(self, *, audio=None, text=None, video=None, **_kw):
+                if audio is not None:
+                    sent_audio.append(audio.data)
+
+            def receive(self):
+                async def _gen():
+                    await asyncio.Event().wait()
+                    yield types.LiveServerMessage()
+
+                return _gen()
+
+        class _FakeAsyncLive:
+            @contextlib.asynccontextmanager
+            async def connect(self, *, model, config):
+                yield _BufSession()
+
+        class _FakeClient:
+            class aio:
+                live = _FakeAsyncLive()
+
+        s3 = GeminiLiveSession(client=_FakeClient())  # type: ignore[arg-type]
+        s3._ctx = ToolContext()
+        s3._context_text = ""
+
+        # _session is None → audio should buffer, not drop
+        assert s3._session is None
+        chunk1 = b"\x00\x01" * 100
+        chunk2 = b"\x02\x03" * 100
+        await s3.send_audio(chunk1, sample_rate=16000)
+        await s3.send_audio(chunk2, sample_rate=16000)
+        assert len(s3._pending_audio) == 2, "audio not buffered"
+        assert sent_audio == [], "audio sent before connect"
+
+        # _open() flushes the buffer
+        await s3._open()
+        assert len(sent_audio) == 2, f"buffer not flushed (got {len(sent_audio)})"
+        assert sent_audio[0] == chunk1 and sent_audio[1] == chunk2, "flushed out of order"
+        assert len(s3._pending_audio) == 0, "buffer not cleared after flush"
+
+        # after connect, audio goes straight through
+        sent_audio.clear()
+        chunk3 = b"\x04\x05" * 50
+        await s3.send_audio(chunk3, sample_rate=16000)
+        assert len(sent_audio) == 1 and sent_audio[0] == chunk3, "post-connect audio not sent"
+        assert len(s3._pending_audio) == 0, "audio buffered after connect"
+
+        await s3.aclose()
+
+    asyncio.run(_check_audio_buffer())
+    print("live_session self-check OK: audio buffered during connect, flushed on _open()")
+
+    # --- byte cap prevents unbounded memory on slow connect ---
+    async def _check_audio_cap() -> None:
+        s4 = GeminiLiveSession(client=genai.Client(api_key="dummy"))
+        big = b"\x00" * 10_000
+        for _ in range(100):
+            await s4.send_audio(big, sample_rate=16000)
+        assert s4._pending_audio_bytes <= 320_000, "byte cap exceeded"
+        assert sum(len(c) for c in s4._pending_audio) <= 320_000, "buffer exceeds cap"
+        print("live_session self-check OK: pending audio byte-capped at 320KB")
+
+    asyncio.run(_check_audio_cap())
 
 
 if __name__ == "__main__":  # pragma: no cover
