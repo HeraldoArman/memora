@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 def create_app() -> FastAPI:
     """Build the FastAPI app. Settings validation runs in lifespan; a missing
     required key raises a clear ValidationError at startup."""
-    setup_logging()
+    setup_logging(log_file="logs/backend.log")
     log.info("create_app(): FastAPI assembly starting")
 
     app = FastAPI(

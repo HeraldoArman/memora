@@ -59,7 +59,7 @@ def _start_health_server(port: int) -> None:
 
 def main() -> None:
     """Run the livekit-agent worker. CLI args: dev | start."""
-    setup_logging()
+    setup_logging(log_file="logs/worker.log")
     load_dotenv()
     settings = get_settings()
     _start_health_server(settings.worker_health_port)

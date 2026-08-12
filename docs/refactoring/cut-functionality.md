@@ -1,11 +1,18 @@
 # Cut Functionality — Proposal vs Bare-Minimum
 
-**Branch:** `refactor/bare-minimum`
-**Date:** 2026-08-11
+**Branch:** `refactor/agent-session-gemini` (active)
+**Date:** 2026-08-12
+
+> **Architecture change (2026-08-12):** The custom `GeminiLiveSession` WebSocket
+> plumbing has been replaced with LiveKit's `AgentSession` +
+> `google.realtime.RealtimeModel` plugin. Audio, video, reconnection, VAD-based
+> turn detection, and tool dispatch are now handled by the LiveKit framework.
+> Re-enable paths below have been updated. See `agent-session-refactor.md` for
+> full details.
 
 This document maps every feature described in the proposal
 (`docs/proposal/main-proposal.md`) to its current status in the
-`refactor/bare-minimum` branch. Features are grouped by the proposal's
+`refactor/agent-session-gemini` branch. Features are grouped by the proposal's
 architecture layers. Each entry notes what was cut, why, and the exact
 re-enable path.
 
@@ -56,17 +63,19 @@ back into `entrypoint.py` `_on_data`. Requires re-enabling ObservationEngine
 
 ## 2. Realtime Communication Layer (LiveKit)
 
-| Proposal feature           | Status      | Notes                                               |
-| -------------------------- | ----------- | --------------------------------------------------- |
-| Video track                | **Kept**    | FrameSampler at 1 FPS                               |
-| Audio track                | **Kept**    | SpeechForwarder → Gemini Live                       |
-| Data channel (inbound)     | **Partial** | Prompt topic works; device telemetry logged only    |
-| Data channel (outbound)    | **Kept**    | Display topic publishes model text to OLED          |
-| Voice response (audio out) | **Kept**    | Speaker publishes Gemini PCM as LiveKit audio track |
+| Proposal feature           | Status      | Notes                                                                           |
+| -------------------------- | ----------- | ------------------------------------------------------------------------------- |
+| Video track                | **Kept**    | FrameSampler for InsightFace; Gemini sees video directly via `video_input=True` |
+| Audio track                | **Kept**    | AgentSession → Gemini RealtimeModel (audio, direct)                             |
+| Data channel (inbound)     | **Partial** | Prompt topic works; device telemetry logged only                                |
+| Data channel (outbound)    | **Kept**    | Display topic publishes model text to OLED                                      |
+| Voice response (audio out) | **Kept**    | AgentSession publishes Gemini audio as LiveKit audio track (automatic)          |
 
 **Nothing cut from this layer.** All three LiveKit channels (video, audio,
-data) remain functional. The only change is that inbound device telemetry on
-the data channel is logged instead of processed.
+data) remain functional. Audio and video now flow directly to Gemini via the
+`RealtimeModel` plugin — no custom `SpeechForwarder` or `_AudioShim` needed.
+The only change is that inbound device telemetry on the data channel is logged
+instead of processed.
 
 ---
 
@@ -121,12 +130,12 @@ but they will return no data.
 
 ### 3.3 Speech Recognition (Speech-to-Text)
 
-| Proposal feature                           | Status   | Notes                                              |
-| ------------------------------------------ | -------- | -------------------------------------------------- |
-| Audio streaming to Gemini Live             | **Kept** | SpeechForwarder → _AudioShim → agent.feed_audio    |
-| Input transcription (Gemini Live)          | **Kept** | `input_transcription` handled in live_session      |
-| Output transcription (Gemini Live)         | **Kept** | `output_transcription` → Display (OLED)            |
-| Speech → SpeechObservation → WorkingMemory | **Cut**  | `_on_transcription` just logs, no observation emit |
+| Proposal feature                           | Status   | Notes                                                                   |
+| ------------------------------------------ | -------- | ----------------------------------------------------------------------- |
+| Audio streaming to Gemini Live             | **Kept** | AgentSession → RealtimeModel (audio, direct)                            |
+| Input transcription (Gemini Live)          | **Kept** | `user_input_transcribed` event from AgentSession                        |
+| Output transcription (Gemini Live)         | **Kept** | `conversation_item_added` event → Display (OLED)                        |
+| Speech → SpeechObservation → WorkingMemory | **Cut**  | Transcription available via event but not emitted to observation engine |
 
 **What was cut:** The proposal (Appendix A.4.3) describes speech being
 converted to text as "one of the primary inputs for long-term memory
@@ -135,15 +144,14 @@ emitted as `SpeechObservation` into the `ObservationEngine`, which fused them
 into `CurrentContext.speech`. The `on_extract` hook then used
 `ctx.speech` at turn boundaries to trigger memory consolidation.
 
-In bare-minimum, `_on_transcription` in `ReasoningAgent` just logs the
-transcript. No `SpeechObservation` is emitted. The Gemini Live model still
-receives audio in real-time and transcribes it — the transcription just
-doesn't flow into the memory pipeline.
+In the current architecture, the `AgentSession` fires `user_input_transcribed`
+events with the transcript, and `on_user_turn_completed` provides the user's
+message. The Gemini model receives audio in real-time and transcribes it —
+the transcription just doesn't flow into the memory pipeline yet.
 
-**Re-enable:** Wire `emit_observation` callback back into `ReasoningAgent`
-constructor. Pass `obs_engine.emit` as the callback. In `_on_transcription`,
-emit `SpeechObservation(transcript=text, confidence=0.9)` for final
-transcripts. Requires re-enabling ObservationEngine (section 4).
+**Re-enable:** Listen to `user_input_transcribed` event on `AgentSession` → emit
+`SpeechObservation` into `ObservationEngine`. Requires re-enabling
+ObservationEngine (see section 4).
 
 ---
 
@@ -180,12 +188,11 @@ In bare-minimum, the video loop writes the face result directly to
 **Re-enable:**
 
 1. Instantiate `WorkingMemory` and `ObservationEngine` in
-   `RoomSession.create()`.
-2. Call `obs_engine.start()` in `session.start()`.
+   `gateway/livekit/entrypoint.py`.
+2. Call `obs_engine.start()` after `AgentSession.start()`.
 3. In `track_handler.py`, emit `FaceObservation` to `obs_engine.emit()`
    instead of writing to `tool_ctx.last_face`.
-4. Call `session.sync_context()` after each frame.
-5. In `ToolContext`, replace `last_face` with `current_context` and update
+4. In `ToolContext`, replace `last_face` with `current_context` and update
    `current_face_embedding()` to iterate observations.
 
 ### 4.2 Memory Pipeline (Extraction → Classification → Consolidation)
@@ -218,11 +225,11 @@ a Neo4j node) but doesn't link facts.
 
 **Re-enable:**
 
-1. Pass `on_extract` callback to `ReasoningAgent` constructor.
-2. In `_on_turn()`, read speech from `tool_ctx.current_context.speech`
-   (requires WorkingMemory re-enabled).
+1. Pass `on_extract` callback to `MemoraAgent` constructor.
+2. In `on_user_turn_completed()`, read the user message + agent response from
+   the `ChatContext` and call `on_extract(text, session_id)`.
 3. Lazily create `ConversationSession` via `MemoryService().start_session()`.
-4. Run `PipelineRunner(consolidator).run(text, session_id)`.
+4. Run `PipelineRunner().run(text, session_id)`.
 5. Requires `TextEmbedder` + `TextIndex` for semantic consolidation.
 
 ---
@@ -253,11 +260,12 @@ bare-minimum, the system prompt is static — no retrieved context.
 
 **Re-enable:**
 
-1. Instantiate `TextEmbedder` + `TextMemoryIndex` in `RoomSession.create()`.
-2. Pass `text_embedder` + `text_index` to `ReasoningAgent`.
+1. Instantiate `TextEmbedder` + `TextMemoryIndex` in `entrypoint.py`.
+2. Pass `text_embedder` + `text_index` to `MemoraAgent`.
 3. Re-build `ContextEngine(retriever=Retriever(...))` in agent constructor.
-4. Call `engine.build(current)` in `agent.start()` to generate context text.
-5. Pass context text to `session.connect(context_text=...)`.
+4. Call `engine.build(current)` in `on_enter()` to generate context text.
+5. Call `self.session.update_instructions(build_system_instruction(text))`
+   to inject the context package into the system prompt.
 6. Re-enable memory pipeline (section 4.2) to populate semantic memory.
 
 ### 5.2 Episodic Memory
@@ -302,15 +310,15 @@ fully functional.
 
 ### 6.1 Gemini Live
 
-| Proposal feature                   | Status   | Notes                                                      |
-| ---------------------------------- | -------- | ---------------------------------------------------------- |
-| Natural voice interaction          | **Kept** | Audio in/out via LiveKit + Gemini Live                     |
-| Tool calling                       | **Kept** | All tools registered and dispatched                        |
-| Output transcription → display     | **Kept** | `output_transcription` → Display → OLED                    |
-| Non-blocking connect               | **Kept** | Background task with retry                                 |
-| Reconnect with backoff             | **Kept** | Receive loop reconnects on connection drop                 |
-| Conversation history re-injection  | **Kept** | `_recent_turns` (last 6 turns) re-injected after reconnect |
-| System prompt with context package | **Cut**  | Static system prompt, no `{{context_package}}`             |
+| Proposal feature                   | Status   | Notes                                                     |
+| ---------------------------------- | -------- | --------------------------------------------------------- |
+| Natural voice interaction          | **Kept** | Audio in/out via AgentSession + RealtimeModel             |
+| Tool calling                       | **Kept** | `@function_tool` decorator on MemoraAgent                 |
+| Output transcription → display     | **Kept** | `conversation_item_added` event → Display → OLED          |
+| Video input (camera → Gemini)      | **Kept** | `RoomOptions(video_input=True)` — Gemini sees camera live |
+| VAD-based turn detection           | **Kept** | Built into RealtimeModel / AgentSession                   |
+| Reconnection                       | **Kept** | Handled by RealtimeModel plugin (no custom code)          |
+| System prompt with context package | **Cut**  | Static instructions via `Agent(instructions=...)`         |
 
 **What was cut:** The proposal (Appendix A.9) describes the reasoning engine
 receiving "Current Working Memory, Retrieved Semantic Memory, Relevant
@@ -319,16 +327,16 @@ Episodic Memory, and User query." In the original architecture, the
 memories and current context, which was injected into the system prompt at
 connect time via the `{{context_package}}` placeholder.
 
-In bare-minimum, the system prompt is static. The agent gets context by
-calling tools (`visible_people`, `current_scene`, `search_memory`, etc.) —
-which is the same mechanism the proposal describes for dynamic context. The
-only difference is that the initial system prompt doesn't contain a pre-built
-context package.
+In the current architecture, the system prompt is static (passed via
+`Agent(instructions=...)`). The agent gets context by calling tools
+(`visible_people`, `current_scene`, `search_memory`, etc.) — which is the same
+mechanism the proposal describes for dynamic context. The only difference is
+that the initial system prompt doesn't contain a pre-built context package.
 
 **Re-enable:** Add `{{context_package}}` back to `SYSTEM_INSTRUCTION` in
 `packages/shared/prompts/system.py`. Restore `build_system_instruction()` to
-do the replace. Pass dynamic `context_text` from `ContextEngine.build()` to
-`session.connect(context_text=...)`.
+do the replace. Call `self.session.update_instructions(context_text)` in
+`on_enter()` to inject dynamic context mid-session.
 
 ### 6.2 Proactive Planner
 
@@ -354,12 +362,13 @@ agent won't proactively remind the user. The user has to ask.
 
 **Re-enable:**
 
-1. Instantiate `ProactivePlanner` in `RoomSession.create()`.
-2. Pass `planner` to `ReasoningAgent` constructor.
+1. Instantiate `ProactivePlanner` in `entrypoint.py`.
+2. Pass `planner` to `MemoraAgent` constructor.
 3. Call `planner.start(self._get_context, self._on_proactive)` in
-   `agent.start()`.
+   `on_enter()`.
 4. `_get_context` needs `tool_ctx.current_context` (requires WorkingMemory).
-5. `_on_proactive` sends a proactive prompt via `session.send_text()`.
+5. `_on_proactive` sends a proactive prompt via
+   `self.session.generate_reply(instructions=text)`.
 
 ---
 
@@ -380,25 +389,24 @@ API surface (token route, LiveKit connection, data channel topics).
 
 ## Summary: What Works vs What's Cut
 
-### Works in bare-minimum
+### Works in current architecture
 
 - User wears glasses, camera + mic stream to LiveKit
 - Agent connects to room via LiveKit dispatch
-- Gemini Live connects (non-blocking, retries in background)
+- AgentSession + RealtimeModel connects to Gemini (handles audio, video, reconnection)
+- Gemini sees camera video directly (video_input=True) and hears mic audio directly
+- VAD-based turn detection (built into RealtimeModel)
 - User sends text prompt → agent responds with audio + OLED text
-- Face detection runs at 1 FPS via InsightFace
+- Face detection runs via InsightFace in video loop
 - Face result writes directly to `tool_ctx.last_face`
-- Agent calls `search_person_by_face` → recognizes known faces
-- Agent calls `search_person` → finds people in Neo4j by name
-- Agent calls `register_person` → creates Person node in Neo4j
-- Agent calls `register_face` → saves embedding to FAISS + Postgres
-- Agent calls `get_person` → returns full profile + relationships
+- Agent calls `@function_tool` methods → recognizes/registers faces
+- Agent calls tools → finds/creates people in Neo4j
 - Face embeddings persist across restarts (Postgres → FAISS on startup)
 - Reminders, shopping lists, calendar events (create/list via tools)
-- Audio out (Gemini PCM → LiveKit audio track → glasses speaker)
-- Display out (model text → LiveKit data channel → OLED)
+- Audio out (Gemini audio → LiveKit audio track → glasses speaker, automatic)
+- Display out (agent text → LiveKit data channel → OLED)
 
-### Cut in bare-minimum
+### Cut in current architecture
 
 - Scene understanding (location, objects, activities) — Gemini Vision leak
 - Memory extraction from conversations — no pipeline runner
@@ -406,12 +414,12 @@ API surface (token route, LiveKit connection, data channel topics).
 - Memory consolidation — no extraction
 - Episodic memory persistence — no conversation sessions
 - Semantic memory retrieval at connect — no ContextEngine/Retriever
-- Context package in system prompt — static prompt only
+- Context package in system prompt — static instructions only
 - Proactive reminders — no planner
 - Device telemetry processing — logged, not emitted
 - Observation fusion — direct dict assignment
 - Working memory TTL — no WorkingMemory
-- Speech → observation feed — transcription logged only
+- Speech → observation feed — transcription available via event but not emitted
 - Retroactive fact linking on `register_person` — no session
 
 ---
@@ -428,14 +436,17 @@ To incrementally re-enable cut functionality, follow this dependency order:
 2. Memory Pipeline (extraction → classification → consolidation)
    └── enables: episodic memory, fact extraction from conversations
    └── requires: ObservationEngine (for speech in CurrentContext)
+   └── trigger: on_user_turn_completed hook on MemoraAgent
 
 3. TextEmbedder + TextIndex + ContextEngine + Retriever
    └── enables: semantic memory retrieval, context package in system prompt
    └── requires: Memory Pipeline (for data to retrieve)
+   └── injection: session.update_instructions() in on_enter()
 
 4. ProactivePlanner
    └── enables: proactive reminders based on context
    └── requires: WorkingMemory (for current context), reminder service
+   └── trigger: session.generate_reply() from planner callback
 
 5. SceneUnderstander (fix memory leak first!)
    └── enables: location, objects, activities

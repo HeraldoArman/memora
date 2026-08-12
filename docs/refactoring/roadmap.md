@@ -1,26 +1,36 @@
 # Refactoring Roadmap — Bare-Minimum to Full Product
 
-**Branch:** `refactor/bare-minimum`
-**Last updated:** 2026-08-11
+**Branch:** `refactor/agent-session-gemini` (active)
+**Last updated:** 2026-08-12
 
 This guide tracks the incremental re-enablement of cut features, from the verified
 bare-minimum base through to the full proposal architecture. Each step is independently
 testable — do not proceed to the next step until the current one passes.
 
+> **Architecture change (2026-08-12):** The custom `GeminiLiveSession` WebSocket
+> plumbing has been replaced with LiveKit's `AgentSession` +
+> `google.realtime.RealtimeModel` plugin. Audio, video, reconnection, VAD-based
+> turn detection, and tool dispatch are now handled by the LiveKit framework
+> instead of custom code. See `agent-session-refactor.md` for details. The
+> re-enable steps below have been updated to reflect the new architecture.
+
 ---
 
 ## Current State
 
-**Step 0 (bare-minimum) is verified.** 4 components work end-to-end:
+**Step 0 (bare-minimum) verified + AgentSession refactor applied.** 4 components
+work end-to-end via LiveKit's `AgentSession` + `RealtimeModel`:
 
 | Component   | Status | Role                                                                    |
 | ----------- | ------ | ----------------------------------------------------------------------- |
-| Gemini Live | ✅     | Conversation, tool calls, audio out, OLED display                       |
+| Gemini Live | ✅     | Realtime model (audio + video in, audio out, tool calls) via LiveKit    |
 | InsightFace | ✅     | Face detection + 512-d embeddings (CPU, session recycle every 30 calls) |
 | Neo4j       | ✅     | Person graph (search/get/register person)                               |
 | Postgres    | ✅     | Face embedding persistence (survives restart)                           |
 
-**Verification:** See `step0-verification.md` for the 10-step end-to-end test results.
+**Verification:** See `step0-verification.md` for the 10-step end-to-end test results
+(original bare-minimum). See `agent-session-refactor.md` for the AgentSession
+refactor details.
 
 ---
 
@@ -36,18 +46,20 @@ Formation" (Core Feature #3). Without it, Memora is just a face recognizer + cha
 
 **What to wire:**
 
-1. In `reasoning/agent/agent.py`:
+1. In `reasoning/agent/agent.py` (`MemoraAgent`):
    - Add `on_extract` callback to constructor
-   - In `_on_turn()`, read the recent conversation turns from `session._recent_turns`
-     and call `on_extract(text, session_id)`
-   - Don't wait for ObservationEngine — use the turns already captured in
-     `GeminiLiveSession._recent_turns` (simpler, no new dependency)
+   - Override `on_user_turn_completed(self, turn_ctx, new_message)` — read the
+     latest user message + agent response from `turn_ctx` and call
+     `on_extract(text, session_id)`
+   - The `AgentSession` fires `on_user_turn_completed` after VAD detects
+     end-of-speech, before the agent's reply. This replaces the old
+     `_on_turn()` / `turn_complete` callback pattern.
 
-2. In `gateway/session.py` `RoomSession.create()`:
+2. In `gateway/livekit/entrypoint.py`:
    - Lazily create a `ConversationSession` via `MemoryService().start_session()`
    - Set `tool_ctx.session_id` to the session UUID
    - Pass `on_extract=lambda text, sid: PipelineRunner().run(text, session_id=sid)`
-     to `ReasoningAgent`
+     to `MemoraAgent`
 
 3. The `PipelineRunner` already exists and works (`pipeline/runner.py`):
    - Filter → KnowledgeExtractor (Gemini structured output) → Consolidator → Neo4j + Postgres
@@ -57,7 +69,7 @@ Formation" (Core Feature #3). Without it, Memora is just a face recognizer + cha
 
 - ObservationEngine / WorkingMemory — skip for now, `tool_ctx.last_face` works fine
 - TextEmbedder / TextIndex — skip, facts go to Postgres but aren't embeddable yet
-- ContextEngine — skip, system prompt stays static
+- ContextEngine — skip, system prompt stays static (passed via `Agent(instructions=...)`)
 
 **Test plan:**
 
@@ -71,8 +83,8 @@ Formation" (Core Feature #3). Without it, Memora is just a face recognizer + cha
 
 **Files to change:**
 
-- `apps/backend/reasoning/agent/agent.py` — add `on_extract` param, wire `_on_turn()`
-- `apps/backend/gateway/session.py` — create session_id, pass on_extract callback
+- `apps/backend/reasoning/agent/agent.py` — add `on_extract` param, wire `on_user_turn_completed`
+- `apps/backend/gateway/livekit/entrypoint.py` — create session_id, pass on_extract callback
 
 **Estimated diff:** ~30 lines
 
@@ -87,15 +99,19 @@ system prompt. "Siapa Asep?" → agent knows the answer without a tool call.
 
 **What to wire:**
 
-1. In `gateway/session.py` `RoomSession.create()`:
+1. In `gateway/livekit/entrypoint.py`:
    - Instantiate `TextEmbedder` (Gemini text embeddings, `perception/embeddings/text_embeddings.py`)
    - Instantiate `TextMemoryIndex` (FAISS for text, `packages/database/vector/text_index.py`)
    - Load existing facts from Postgres into the text index on startup
 
-2. In `reasoning/agent/agent.py`:
+2. In `reasoning/agent/agent.py` (`MemoraAgent`):
    - Accept `engine: ContextEngine` in constructor
-   - In `start()`, call `engine.build(current=None)` to get `(ContextPackage, text)`
-   - Pass `context_text=text` to `session.connect(context_text=...)`
+   - In `on_enter()`, call `engine.build(current=None)` to get `(ContextPackage, text)`
+   - Call `self.session.update_instructions(build_system_instruction(text))` to
+     inject the context package into the system prompt mid-session
+   - Alternatively, build the instructions before `AgentSession.start()` and pass
+     them via `Agent(instructions=...)` — simpler but requires the context to be
+     ready before the session starts
 
 3. In `packages/shared/prompts/system.py`:
    - Add `{{context_package}}` placeholder back to `SYSTEM_INSTRUCTION`
@@ -112,8 +128,8 @@ system prompt. "Siapa Asep?" → agent knows the answer without a tool call.
 
 **Files to change:**
 
-- `apps/backend/gateway/session.py` — instantiate TextEmbedder + TextIndex + ContextEngine
-- `apps/backend/reasoning/agent/agent.py` — accept engine, call build() in start()
+- `apps/backend/gateway/livekit/entrypoint.py` — instantiate TextEmbedder + TextIndex + ContextEngine
+- `apps/backend/reasoning/agent/agent.py` — accept engine, call build() in on_enter()
 - `packages/shared/prompts/system.py` — add `{{context_package}}` placeholder
 - `apps/backend/reasoning/prompts/system.py` — restore replace logic
 
@@ -140,7 +156,7 @@ HTTP connection pool + response cache.
    - Fix: create a new `genai.Client` per `understand()` call, or recycle every N calls
    - Alternative: use `httpx.AsyncClient` directly with the Gemini REST API (bypass genai client)
 
-2. In `gateway/session.py` `RoomSession.create()`:
+2. In `gateway/livekit/entrypoint.py`:
    - Instantiate `SceneUnderstander`
 
 3. In `gateway/livekit/track_handler.py` video loop:
@@ -166,7 +182,7 @@ HTTP connection pool + response cache.
 **Files to change:**
 
 - `apps/backend/perception/scene/understander.py` — fix client leak
-- `apps/backend/gateway/session.py` — instantiate SceneUnderstander
+- `apps/backend/gateway/livekit/entrypoint.py` — instantiate SceneUnderstander
 - `apps/backend/gateway/livekit/track_handler.py` — call scene understander in video loop
 - `apps/backend/tools/registry.py` — add `last_scene` to ToolContext
 - `apps/backend/tools/observation/tools.py` — read from `last_scene`
@@ -184,17 +200,18 @@ Entering a pharmacy → "Jangan lupa beli paracetamol."
 
 **What to wire:**
 
-1. In `gateway/session.py` `RoomSession.create()`:
+1. In `gateway/livekit/entrypoint.py`:
    - Instantiate `ProactivePlanner(reminder_service=..., shopping_service=...)`
 
-2. In `reasoning/agent/agent.py`:
+2. In `reasoning/agent/agent.py` (`MemoraAgent`):
    - Accept `planner` in constructor
-   - In `start()`, call `planner.start(self._get_context, self._on_proactive)`
+   - In `on_enter()`, call `planner.start(self._get_context, self._on_proactive)`
    - `_get_context()` returns a `CurrentContext` built from `tool_ctx.last_face`
      and `tool_ctx.last_scene` (simple dict → CurrentContext, no WorkingMemory needed)
-   - `_on_proactive(text)` calls `session.send_text(text)` to inject a proactive prompt
+   - `_on_proactive(text)` calls `self.session.generate_reply(instructions=text)`
+     to inject a proactive prompt (replaces old `session.send_text()`)
 
-3. In `reasoning/agent/agent.py` `stop()`:
+3. In `reasoning/agent/agent.py` `on_exit()`:
    - Call `planner.stop()`
 
 **Test plan:**
@@ -207,8 +224,8 @@ Entering a pharmacy → "Jangan lupa beli paracetamol."
 
 **Files to change:**
 
-- `apps/backend/gateway/session.py` — instantiate ProactivePlanner
-- `apps/backend/reasoning/agent/agent.py` — accept planner, wire start/stop
+- `apps/backend/gateway/livekit/entrypoint.py` — instantiate ProactivePlanner
+- `apps/backend/reasoning/agent/agent.py` — accept planner, wire on_enter/on_exit
 
 **Estimated diff:** ~30 lines
 
@@ -234,10 +251,10 @@ This is architecturally cleaner but not visible to the user. Only re-enable if:
 
 **What to wire:**
 
-1. In `gateway/session.py`:
+1. In `gateway/livekit/entrypoint.py`:
    - Instantiate `WorkingMemory` + `ObservationEngine(working_memory)`
-   - Call `obs_engine.start()` in `session.start()`
-   - Call `obs_engine.stop()` in `session.stop()`
+   - Call `obs_engine.start()` after `AgentSession.start()`
+   - Call `obs_engine.stop()` in the job-end cleanup
 
 2. In `gateway/livekit/track_handler.py`:
    - Emit `FaceObservation` to `obs_engine.emit()` instead of writing to `tool_ctx.last_face`
@@ -251,11 +268,10 @@ This is architecturally cleaner but not visible to the user. Only re-enable if:
    - `current_face_embedding()` reads from `current_context.observations`
    - `device_snapshot()` reads from `current_context.device`
 
-5. In `reasoning/agent/agent.py`:
-   - `_on_transcription()` emits `SpeechObservation` to `obs_engine.emit()`
-   - `_on_turn()` reads speech from `current_context.speech`
-
-6. Call `session.sync_context()` after each frame to push CurrentContext to ToolContext.
+5. In `reasoning/agent/agent.py` (`MemoraAgent`):
+   - Listen to `user_input_transcribed` event on `AgentSession` → emit
+     `SpeechObservation` to `obs_engine.emit()`
+   - `on_user_turn_completed()` reads speech from `current_context.speech`
 
 **Test plan:**
 
@@ -266,9 +282,8 @@ This is architecturally cleaner but not visible to the user. Only re-enable if:
 
 **Files to change:**
 
-- `apps/backend/gateway/session.py`
-- `apps/backend/gateway/livekit/track_handler.py`
 - `apps/backend/gateway/livekit/entrypoint.py`
+- `apps/backend/gateway/livekit/track_handler.py`
 - `apps/backend/tools/registry.py`
 - `apps/backend/reasoning/agent/agent.py`
 
@@ -320,11 +335,9 @@ For quick smoke tests, use the dashboard at `http://localhost:3000`:
 
 | File                                                    | Role                                                 |
 | ------------------------------------------------------- | ---------------------------------------------------- |
-| `apps/backend/gateway/session.py`                       | RoomSession — wires all components per room          |
-| `apps/backend/gateway/livekit/entrypoint.py`            | LiveKit job handler — room connection + track wiring |
-| `apps/backend/gateway/livekit/track_handler.py`         | Video/audio track → perception + reasoning           |
-| `apps/backend/reasoning/agent/agent.py`                 | ReasoningAgent — Gemini Live + tool dispatch         |
-| `apps/backend/reasoning/session/live_session.py`        | GeminiLiveSession — WS connection + receive loop     |
+| `apps/backend/gateway/livekit/entrypoint.py`            | LiveKit job handler — AgentSession + RealtimeModel   |
+| `apps/backend/gateway/livekit/track_handler.py`         | Video track → InsightFace face recognition loop      |
+| `apps/backend/reasoning/agent/agent.py`                 | MemoraAgent — LiveKit Agent subclass with tools      |
 | `apps/backend/tools/registry.py`                        | ToolContext — shared state injected into tool calls  |
 | `apps/backend/perception/face/recognizer.py`            | FaceRecognizer — InsightFace adapter                 |
 | `apps/backend/perception/scene/understander.py`         | SceneUnderstander — Gemini Vision adapter            |
@@ -335,7 +348,18 @@ For quick smoke tests, use the dashboard at `http://localhost:3000`:
 | `apps/backend/pipeline/consolidator.py`                 | Consolidator — write to Neo4j + Postgres             |
 | `apps/backend/context/engine.py`                        | ContextEngine — retrieval→ranking→packaging          |
 | `apps/backend/reasoning/planner/planner.py`             | ProactivePlanner — context-aware reminders           |
+| `apps/backend/reasoning/response/display.py`            | Display — model text → glasses OLED via data channel |
 | `packages/config/env/settings.py`                       | Settings — all env config (single source of truth)   |
+
+**Deleted in AgentSession refactor:**
+
+| File (deleted)                                   | Replaced by                                     |
+| ------------------------------------------------ | ----------------------------------------------- |
+| `apps/backend/reasoning/session/live_session.py` | `livekit.plugins.google.realtime.RealtimeModel` |
+| `apps/backend/reasoning/tools/router.py`         | `@function_tool` decorator on `MemoraAgent`     |
+| `apps/backend/reasoning/response/speaker.py`     | `AgentSession` automatic audio output           |
+| `apps/backend/perception/speech/forwarder.py`    | `AgentSession` automatic audio input            |
+| `apps/backend/gateway/session.py`                | Inlined into `entrypoint.py`                    |
 
 ---
 
@@ -347,33 +371,34 @@ Video frame
   → FaceRecognizer → FaceRepository.lookup → tool_ctx.last_face
   → SceneUnderstander → tool_ctx.last_scene          (Step 3)
 
-Audio
-  → SpeechForwarder → Gemini Live (realtime audio in)
+Audio + Video
+  → LiveKit → AgentSession → Gemini RealtimeModel (audio + video, direct)
+  → VAD-based turn detection (built-in)
 
 Prompt (data channel)
-  → agent.feed_prompt() → Gemini Live (text in)
+  → entrypoint data_received → session.generate_reply()
 
-Gemini Live
-  → tool_call → ToolRouter → tool_ctx (last_face, last_scene, services)
-  → tool_result → response
-  → output_transcription → Display (OLED)
-  → audio → Speaker
+Gemini RealtimeModel (via AgentSession)
+  → tool_call → @function_tool methods on MemoraAgent
+    → reads tool_ctx (last_face, last_scene, services)
+  → audio output → LiveKit audio track (automatic)
+  → transcription → conversation_item_added event → Display (OLED)
 
-Turn boundary
-  → _on_turn() → PipelineRunner.run(text, session_id)  (Step 1)
+Turn boundary (on_user_turn_completed)
+  → PipelineRunner.run(text, session_id)              (Step 1)
     → KnowledgeExtractor (Gemini structured output)
     → Consolidator → Neo4j (graph) + Postgres (episodic + facts)
 
-Agent start
+Agent enter (on_enter)
   → ContextEngine.build() → context_text              (Step 2)
     → Retriever (Neo4j + Postgres + TextIndex)
     → Ranker
     → Summarizer (Gemini)
-  → system prompt with context package
+  → session.update_instructions(system prompt with context package)
 
 Proactive loop (every 30s)                              (Step 4)
   → ProactivePlanner.check_context()
-  → if reminder matches scene → send_text("Jangan lupa...")
+  → if reminder matches scene → session.generate_reply("Jangan lupa...")
 ```
 
 This matches the proposal's Appendix A.10 end-to-end workflow.

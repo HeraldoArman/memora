@@ -1,146 +1,130 @@
-"""ReasoningAgent — owns the Gemini Live session + tool wiring.
+"""MemoraAgent — LiveKit Agent subclass with Gemini RealtimeModel tools.
 
-refactor/bare-minimum: stripped to Gemini Live + Speaker + Display + tool dispatch.
-ContextEngine, Retriever, ProactivePlanner, on_extract, and emit_observation are
-bypassed. Re-enable by passing them to the constructor again.
+Replaces the custom GeminiLiveSession + ReasoningAgent + ToolRouter with a
+single Agent class. Audio, video, reconnection, VAD-based turn detection, and
+audio output are handled by AgentSession + RealtimeModel — no custom plumbing.
 
-The agent is the per-room brain. It:
-  - connects Gemini Live with the tool surface + static system prompt,
-  - wires the live session's callbacks: output_transcription → Display, audio → Speaker,
-  - exposes feed_prompt/feed_audio for the gateway to push user input.
-
-No multi-user: one agent per room, one implicit device.
+Tools are auto-generated from ALL_FUNCTION_DECLARATIONS via raw_schema, so
+every declared tool gets a @function_tool wrapper that dispatches to the
+existing registry callable. No per-tool boilerplate.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from reasoning.response.display import Display
-from reasoning.response.speaker import Speaker
-from reasoning.session.live_session import GeminiLiveSession
-from tools import ToolContext
+from livekit.agents import Agent, RunContext, function_tool
+
+from prompts import SYSTEM_INSTRUCTION
+from tools import ToolContext, build_registry
 
 log = logging.getLogger(__name__)
 
 
-class ReasoningAgent:
-    """Per-room reasoning brain wiring perception → Gemini → response."""
+class MemoraAgent(Agent):
+    """LiveKit Agent for Memora — dementia memory assistant.
+
+    Tools are exposed via @function_tool(raw_schema=...) auto-generated from
+    ALL_FUNCTION_DECLARATIONS. The agent sees video directly (via
+    RoomOptions.video_input=True) and hears audio directly (via AgentSession).
+    InsightFace runs in parallel for face recognition, writing results to
+    tool_ctx.last_face.
+    """
 
     def __init__(
         self,
         *,
-        room: Any,
         tool_ctx: ToolContext,
-        session: GeminiLiveSession | None = None,
-        speaker: Speaker | None = None,
-        display: Display | None = None,
         on_extract: Callable[[str, str | None], Awaitable[None]] | None = None,
     ) -> None:
-        self.room = room
-        self.ctx = tool_ctx
-        self.session = session or GeminiLiveSession()
-        self.speaker = speaker or Speaker()
-        self.display = display or Display(room)
-        self._connected = False
+        super().__init__(instructions=SYSTEM_INSTRUCTION)
+        self._tool_ctx = tool_ctx
         self._on_extract = on_extract
-
-    async def start(self, current: object = None) -> None:
-        """Connect the live session, publish speaker, spawn receive loop.
-
-        `current` is ignored in bare-minimum — system prompt is static.
-        """
-        # connect live session (non-blocking — background task with retry)
-        self.session.set_audio_sink(self.speaker.feed)
-        self.session.set_turn_complete_callback(self._on_turn)
-        await self.session.connect(
-            ctx=self.ctx,
-            context_text="",  # bare-minimum: static system prompt, no context package
-            on_text=self.display.show,
-            on_transcription=self._on_transcription,
+        log.info(
+            "MemoraAgent constructed: instructions=%d chars, tool_ctx=%s, on_extract=%s",
+            len(SYSTEM_INSTRUCTION),
+            "wired" if tool_ctx else "None",
+            "wired" if on_extract else "None",
         )
 
-        # publish speaker track + start receive loop (waits for connect in background)
-        self.speaker.publish(self.room)
-        self.session.start_receive()
-        self._connected = True
-        log.info("reasoning agent started")
+    async def on_enter(self) -> None:
+        """Called when agent becomes active. Greet the user."""
+        log.info("on_enter: agent becoming active, generating greeting...")
+        await self.session.generate_reply(
+            instructions="Sapa pengguna dengan singkat dalam Bahasa Indonesia."
+        )
+        log.info("on_enter: greeting generated")
 
-    async def _on_turn(self) -> None:
-        """Turn boundary — fire extraction on the last user prompt + agent response."""
-        if self._on_extract is None:
-            return
-        turns = self.session._recent_turns
-        if not turns:
-            return
-        text = "\n".join(turns[-2:])
-        try:
-            await self._on_extract(text, self.ctx.session_id)
-        except Exception as exc:  # noqa: BLE001 — pipeline errors must not kill the agent
-            log.warning("on_extract failed: %s", exc)
+    # --- Tool dispatch ---
 
-    async def _on_transcription(self, text: str, is_final: bool) -> None:
-        """Input speech transcription — no observation feed in bare-minimum."""
-        log.debug("transcription: %r (final=%s)", text, is_final)
+    def _dispatch(self, name: str) -> Callable[[dict, RunContext], Awaitable[Any]]:
+        """Return a handler that forwards raw_arguments to the registry callable."""
+        registry = build_registry()
 
-    async def feed_prompt(self, text: str) -> None:
-        """Inject a text prompt into the live session (from dashboard "prompt" topic)."""
-        log.info("feeding prompt to gemini: %r", text[:120])
-        await self.session.send_text(text)
+        async def _handler(raw_arguments: dict[str, object], ctx: RunContext) -> Any:
+            log.info("tool call: %s args=%s", name, dict(raw_arguments))
+            func = registry.get(name)
+            if func is None:
+                log.error("tool not found in registry: %s", name)
+                return {"error": f"unknown tool: {name}"}
+            try:
+                result = await func(dict(raw_arguments), self._tool_ctx)
+                log.info(
+                    "tool result: %s → %s",
+                    name,
+                    str(result)[:300] if result else "None",
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("tool %s failed: %s", name, exc, exc_info=True)
+                return {"error": f"{type(exc).__name__}: {exc}"}
+            return result
 
-    async def feed_audio(self, pcm: bytes, *, sample_rate: int = 16000) -> None:
-        """Perception speech forwarder pushes audio chunks here."""
-        await self.session.send_audio(pcm, sample_rate=sample_rate)
-
-    async def stop(self) -> None:
-        if self._connected:
-            await self.session.aclose()
-            await self.speaker.aclose()
-        self._connected = False
-        log.info("reasoning agent stopped")
+        return _handler
 
 
-# --- self-check: wiring (no live connection, no network) ---
-def _self_check() -> None:  # pragma: no cover
-    from unittest.mock import AsyncMock, MagicMock
+def _build_tools(tool_ctx: ToolContext, on_extract=None) -> list:
+    """Auto-generate @function_tool wrappers from ALL_FUNCTION_DECLARATIONS.
 
-    room = MagicMock()
-    ctx = ToolContext()
-    session = MagicMock()
-    session.connect = AsyncMock()
-    session.aclose = AsyncMock()
-    session.start_receive = MagicMock()
-    session.set_audio_sink = MagicMock()
-    session.set_turn_complete_callback = MagicMock()
-    speaker = MagicMock()
-    speaker.publish = MagicMock()
-    speaker.aclose = AsyncMock()
-    display = MagicMock()
-    display.show = AsyncMock()
+    Each declared tool gets a raw_schema function_tool that dispatches to the
+    existing registry callable. This avoids writing 31 wrapper methods by hand.
+    """
+    from schemas import ALL_FUNCTION_DECLARATIONS
 
-    agent = ReasoningAgent(
-        room=room,
-        tool_ctx=ctx,
-        session=session,
-        speaker=speaker,
-        display=display,
+    log.info(
+        "building tools from ALL_FUNCTION_DECLARATIONS: %d declarations",
+        len(ALL_FUNCTION_DECLARATIONS),
     )
+    agent = MemoraAgent(tool_ctx=tool_ctx, on_extract=on_extract)
+    tools = []
+    for decl in ALL_FUNCTION_DECLARATIONS:
+        name = decl["name"]
+        handler = agent._dispatch(name)
 
-    asyncio.run(agent.start(current=None))
+        schema = {
+            "name": name,
+            "description": decl.get("description", ""),
+            "parameters": decl.get("parameters", {"type": "object", "properties": {}}),
+        }
+        tool = function_tool(handler, raw_schema=schema)
+        tools.append(tool)
 
-    session.connect.assert_called_once()
-    session.set_audio_sink.assert_called_once_with(speaker.feed)
-    session.set_turn_complete_callback.assert_called_once()
-    speaker.publish.assert_called_once_with(room)
-    session.start_receive.assert_called_once()
-    assert agent._connected
+    log.info("built %d @function_tool wrappers", len(tools))
+    return tools
 
-    asyncio.run(agent.stop())
-    assert not agent._connected
-    print("agent self-check OK: connect→speaker→receive wiring verified")
+
+# --- self-check: tool count matches declarations ---
+def _self_check() -> None:  # pragma: no cover
+    from schemas import ALL_FUNCTION_DECLARATIONS
+
+    ctx = ToolContext()
+    tools = _build_tools(ctx)
+    declared = {d["name"] for d in ALL_FUNCTION_DECLARATIONS}
+    tool_names = {t.info.name for t in tools}
+    assert tool_names == declared, f"mismatch: {tool_names ^ declared}"
+    assert len(tools) == len(ALL_FUNCTION_DECLARATIONS)
+    print(f"agent self-check OK: {len(tools)} tools generated from {len(declared)} declarations")
 
 
 if __name__ == "__main__":  # pragma: no cover

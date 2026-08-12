@@ -1,20 +1,8 @@
-"""Track handler — wire subscribed video/audio tracks to perception + reasoning.
+"""Track handler — wire subscribed video tracks to InsightFace.
 
-On track_subscribed, spawn two background tasks per track:
-  - Video track → FrameSampler (1 FPS) → for each frame:
-      * FaceRecognizer.detect_and_embed → FaceRepository.lookup → FaceObservation emit
-        into the ObservationEngine (identity path, deterministic).
-      * agent.feed_video(jpeg) → Gemini Live (scene-understanding path).
-      * sync the new ToolContext.current_context from WorkingMemory after each emit so
-        tools see fresh observation data.
-  - Audio track → SpeechForwarder → agent.feed_audio (Gemini Live realtime audio in).
-
-Ponytail: one task per track, no per-frame threading. Face recognition runs inline on
-the sampled frame at 1 FPS (CPU-bound but bounded). The forwarder is reused as-is; we
-give it a shim exposing send_realtime_input so we don't modify the tested forwarder.
-
-The video loop also bridges the FaceObservation into the ObservationEngine — the
-recognizer's embedding is attached so search_person_by_face can use it.
+AgentSession handles audio input/output to Gemini directly. This module only
+runs the video loop for face recognition: sample frames → InsightFace →
+tool_ctx.last_face. Gemini sees video separately via RoomOptions(video_input=True).
 """
 
 from __future__ import annotations
@@ -26,39 +14,8 @@ import logging
 log = logging.getLogger(__name__)
 
 
-class _AudioShim:
-    """Adapts the agent's feed_audio to the SpeechForwarder's send_realtime_input(audio=blob) API.
-
-    SpeechForwarder calls live_session.send_realtime_input(audio=Blob). We unwrap the Blob
-    (mime_type audio/pcm;rate=N, data=bytes) and call agent.feed_audio(data, sample_rate=N).
-    Ponytail: shim rather than modifying the tested forwarder.
-    """
-
-    def __init__(self, agent) -> None:
-        self._agent = agent
-
-    async def send_realtime_input(self, *, audio=None, **_kw) -> None:
-        if audio is None:
-            return
-        data = getattr(audio, "data", None)
-        if not data:
-            return
-        # mime_type is "audio/pcm;rate=16000" → parse rate
-        rate = 16000
-        mime = getattr(audio, "mime_type", "") or ""
-        if "rate=" in mime:
-            try:
-                rate = int(mime.split("rate=")[1].split(";")[0])
-            except (ValueError, IndexError):
-                pass
-        await self._agent.feed_audio(bytes(data), sample_rate=rate)
-
-
-async def handle_video_track(track, room, session) -> asyncio.Task:
+async def handle_video_track(track, room, tool_ctx) -> asyncio.Task:
     """Spawn the video loop: sample frames → face identity.
-
-    refactor/bare-minimum: writes face result directly to tool_ctx.last_face instead
-    of going through ObservationEngine → WorkingMemory → sync_context.
 
     Returns the background task (caller stores it for cleanup).
     """
@@ -67,74 +24,103 @@ async def handle_video_track(track, room, session) -> asyncio.Task:
     from perception.face.recognizer import FaceRecognizer
     from perception.vision.sampler import FrameSampler
 
+    log.info("handle_video_track: creating VideoStream + FrameSampler + FaceRecognizer")
     video_stream = rtc.VideoStream(track)
     sampler = FrameSampler(video_stream)
     recognizer = FaceRecognizer()
 
     async def _video_loop() -> None:
-        log.info("video loop started")
+        log.info("video loop started — sampling frames for InsightFace")
         frame_count = 0
         try:
             async for frame in sampler.frames():
                 frame_count += 1
                 try:
                     bgr = frame["bgr"]
-                    # run face detection in a thread so it doesn't block the
-                    # event loop (ONNX CPU inference takes 1-2s; blocking
-                    # prevents Gemini connect task + receive loop from running)
                     faces = await asyncio.to_thread(recognizer.detect_and_embed, bgr)
                     log.info(
-                        "frame: %dx%d faces=%d",
+                        "video frame %d: %dx%d faces=%d",
+                        frame_count,
                         bgr.shape[1],
                         bgr.shape[0],
                         len(faces),
                     )
                     if faces:
-                        f = faces[0]
-                        await _update_last_face(f, session)
+                        log.debug(
+                            "video frame %d: face detected (det_score=%.3f bbox=%s), running lookup",
+                            frame_count,
+                            getattr(faces[0], "det_score", 0),
+                            getattr(faces[0], "bbox", None),
+                        )
+                        await _update_last_face(faces[0], tool_ctx)
+                    else:
+                        # No face in frame — clear last_face so tools don't see stale data
+                        if tool_ctx.last_face is not None:
+                            log.debug(
+                                "video frame %d: no face detected, clearing stale last_face",
+                                frame_count,
+                            )
+                            tool_ctx.last_face = None
                     del bgr, faces
                     if frame_count % 5 == 0:
                         gc.collect()
-                except Exception:  # noqa: BLE001 — perception errors must not kill the loop
-                    log.exception("face recognize failed")
+                except Exception:  # noqa: BLE001
+                    log.exception("face recognize failed on frame %d", frame_count)
         except asyncio.CancelledError:
+            log.info("video loop cancelled (task cleanup)")
             raise
         except Exception:  # noqa: BLE001
-            log.exception("video loop crashed")
+            log.exception("video loop crashed unexpectedly")
 
     task = asyncio.create_task(_video_loop(), name="video-loop")
+    log.info("video loop task spawned (name=video-loop)")
     return task
 
 
-async def _update_last_face(detected, session) -> None:
+async def _update_last_face(detected, tool_ctx) -> None:
     """Look up face embedding → write result directly to tool_ctx.last_face."""
     try:
-        face_repo = session.face_repo
+        face_repo = tool_ctx.face_repo
         if face_repo is None:
             log.debug("face repo not available; skipping identity lookup")
             return
+        log.debug(
+            "face lookup: embedding shape=%s, repo size=%d",
+            getattr(detected.embedding, "shape", None),
+            face_repo.size,
+        )
         result = face_repo.lookup(detected.embedding)
         name = None
         if result.person_id and (result.is_known or result.is_possible):
             try:
                 from graph import repository as graph_repo
 
+                log.debug(
+                    "face lookup: resolving name for person_id=%s via graph", result.person_id
+                )
                 profile = await graph_repo.PersonRepo().get_person(result.person_id)
                 if profile:
                     name = profile.get("name")
+                    log.debug("face lookup: name resolved to %s", name)
+                else:
+                    log.debug("face lookup: person_id=%s has no profile in graph", result.person_id)
             except Exception:  # noqa: BLE001
-                log.warning("face name lookup failed for %s; keeping name=None", result.person_id)
+                log.warning(
+                    "face name lookup failed for %s; keeping name=None",
+                    result.person_id,
+                    exc_info=True,
+                )
 
         if result.person_id is None:
             log.info(
-                "face lookup: unknown score=%.3f (threshold known=%.2f possible=%.2f)",
+                "face lookup: UNKNOWN score=%.3f (threshold known=%.2f possible=%.2f) — caching embedding",
                 result.score,
                 face_repo.known_threshold,
                 face_repo.possible_threshold,
             )
         else:
             log.info(
-                "face lookup: %s name=%s score=%.3f known=%s possible=%s",
+                "face lookup: person_id=%s name=%s score=%.3f known=%s possible=%s",
                 result.person_id,
                 name,
                 result.score,
@@ -142,8 +128,7 @@ async def _update_last_face(detected, session) -> None:
                 result.is_possible,
             )
 
-        # Write directly to tool_ctx — no observation engine, no working memory
-        session.tool_ctx.last_face = {
+        tool_ctx.last_face = {
             "embedding": detected.embedding,
             "person_id": result.person_id,
             "name": name,
@@ -151,63 +136,32 @@ async def _update_last_face(detected, session) -> None:
             "is_known": result.is_known,
             "is_possible": result.is_possible,
         }
+        log.debug(
+            "tool_ctx.last_face updated: person_id=%s name=%s known=%s possible=%s",
+            result.person_id,
+            name,
+            result.is_known,
+            result.is_possible,
+        )
         if not result.is_known:
-            session.tool_ctx.cache_unknown_embedding(detected.embedding)
+            tool_ctx.cache_unknown_embedding(detected.embedding)
+            log.debug("cached unknown embedding (TTL=%ss)", tool_ctx.UNKNOWN_EMBEDDING_TTL_S)
     except Exception:  # noqa: BLE001
         log.exception("face lookup failed")
 
 
-async def handle_audio_track(track, room, session) -> asyncio.Task:
-    """Spawn the audio forwarder loop: AudioStream → Gemini Live.
-
-    Returns the background task (caller stores it for cleanup).
-    """
-    from livekit import rtc
-
-    from perception.speech.forwarder import SpeechForwarder
-
-    audio_stream = rtc.AudioStream(track, sample_rate=16000, num_channels=1)
-    shim = _AudioShim(session.agent)
-    forwarder = SpeechForwarder(audio_stream, shim)
-
-    async def _audio_loop() -> None:
-        try:
-            await forwarder.run()
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 — gemini ws closed; receive loop reconnects
-            log.info("audio forwarder ended (gemini reconnecting); loop exits cleanly")
-
-    task = asyncio.create_task(_audio_loop(), name="audio-loop")
-    return task
-
-
-# --- self-check: audio shim rate parse + dispatch ---
+# --- self-check: _update_last_face with None repo is a no-op ---
 def _self_check() -> None:  # pragma: no cover
     import asyncio
+    from types import SimpleNamespace
 
-    from google.genai import types
+    from tools import ToolContext
 
-    class _Agent:
-        def __init__(self):
-            self.calls = []
-
-        async def feed_audio(self, data, *, sample_rate):
-            self.calls.append((data, sample_rate))
-
-    agent = _Agent()
-    shim = _AudioShim(agent)
-    blob = types.Blob(mime_type="audio/pcm;rate=16000", data=b"\x00\x01\x02")
-    asyncio.run(shim.send_realtime_input(audio=blob))
-    assert agent.calls == [(b"\x00\x01\x02", 16000)], agent.calls
-
-    # weird rate parsed, no audio = no-op
-    blob2 = types.Blob(mime_type="audio/pcm;rate=8000", data=b"\x04")
-    asyncio.run(shim.send_realtime_input(audio=blob2))
-    assert agent.calls[-1] == (b"\x04", 8000)
-    asyncio.run(shim.send_realtime_input(audio=None))
-    assert len(agent.calls) == 2
-    print("track_handler self-check OK: shim parses rate + dispatches feed_audio")
+    ctx = ToolContext()
+    detected = SimpleNamespace(embedding=None)
+    asyncio.run(_update_last_face(detected, ctx))
+    assert ctx.last_face is None  # no repo → no update
+    print("track_handler self-check OK: no repo → no-op")
 
 
 if __name__ == "__main__":  # pragma: no cover

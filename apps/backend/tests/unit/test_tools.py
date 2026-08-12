@@ -14,7 +14,6 @@ import numpy as np
 import pytest
 
 from constants import ToolName
-from reasoning.tools.router import _resp, dispatch_tool_call
 from tools import ToolContext, get_tool
 
 # Re-import the tool modules so we test the exact callables the registry wires.
@@ -478,56 +477,3 @@ class TestRegistry:
     def test_get_tool(self) -> None:
         assert get_tool("firmware_version") is sys_tools.firmware_version
         assert get_tool("nope") is None
-
-
-class TestRouter:
-    def test_resp_shape(self) -> None:
-        assert _resp("c1", "x", {"a": 1}) == {"id": "c1", "name": "x", "response": {"a": 1}}
-
-    async def test_dispatch_known_and_unknown(self) -> None:
-        from google.genai import types
-
-        from tools import registry as reg
-
-        async def _fake(args, ctx):
-            return {"ok": True}
-
-        orig = reg.build_registry()
-        reg._REGISTRY = {**orig, "firmware_version": _fake}
-        try:
-            tc = types.LiveServerToolCall(
-                function_calls=[
-                    types.FunctionCall(id="c1", name="firmware_version", args={}),
-                    types.FunctionCall(id="c2", name="bogus", args={}),
-                ]
-            )
-            resps = await dispatch_tool_call(tc, _ctx())
-        finally:
-            reg._REGISTRY = orig
-        assert resps[0]["id"] == "c1" and resps[0]["response"] == {"ok": True}
-        assert "unknown tool" in resps[1]["response"]["error"]
-
-    async def test_dispatch_tool_error_is_caught(self) -> None:
-        from google.genai import types
-
-        from tools import registry as reg
-
-        async def _boom(args, ctx):
-            raise ValueError("kaboom")
-
-        orig = reg.build_registry()
-        reg._REGISTRY = {**orig, "firmware_version": _boom}
-        try:
-            tc = types.LiveServerToolCall(
-                function_calls=[types.FunctionCall(id="c1", name="firmware_version", args={})]
-            )
-            resps = await dispatch_tool_call(tc, _ctx())
-        finally:
-            reg._REGISTRY = orig
-        assert "ValueError" in resps[0]["response"]["error"]
-
-    async def test_dispatch_empty_calls(self) -> None:
-        from google.genai import types
-
-        resps = await dispatch_tool_call(types.LiveServerToolCall(function_calls=[]), _ctx())
-        assert resps == []
