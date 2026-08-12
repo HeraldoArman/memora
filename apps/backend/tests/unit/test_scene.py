@@ -7,7 +7,7 @@ degradation when the API fails.
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 from perception.scene.understander import SceneUnderstander, _normalize, _parse
 
@@ -70,8 +70,8 @@ class TestSceneUnderstander:
         assert await su.understand(b"") is None
 
     async def test_api_failure_returns_none(self) -> None:
-        client = AsyncMock()
-        client.aio.models.generate_content = AsyncMock(side_effect=RuntimeError("api down"))
+        client = MagicMock()
+        client.models.generate_content = MagicMock(side_effect=RuntimeError("api down"))
         su = SceneUnderstander(client=client)
         assert await su.understand(b"jpeg") is None
 
@@ -89,8 +89,8 @@ class TestSceneUnderstander:
                 "text": "",
             },
         )()
-        client = AsyncMock()
-        client.aio.models.generate_content = AsyncMock(return_value=resp)
+        client = MagicMock()
+        client.models.generate_content = MagicMock(return_value=resp)
         su = SceneUnderstander(client=client)
         data = await su.understand(b"jpeg")
         assert data["location"] == "apotek"

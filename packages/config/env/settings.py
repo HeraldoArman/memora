@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     gemini_api_key: str
     gemini_live_model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
     gemini_text_model: str = "gemini-2.5-flash"
+    gemini_embedding_model: str = "gemini-embedding-001"
+    # ponytail: shared timeout for all non-live Gemini calls (extraction, summarizer, embeddings)
+    gemini_http_timeout_ms: int = 15000
 
     # === Postgres (required) ===
     database_url: str
