@@ -2,6 +2,7 @@
 #include "nvs_flash.h"
 
 #include "display.h"
+#include "jpeg_ingest.h"
 #include "livekit_transport.h"
 #include "media.h"
 #include "network.h"
@@ -39,5 +40,6 @@ extern "C" void app_main() {
     }
 
     memora::livekit::publish_telemetry(false);
+    memora::jpeg::start();
     memora::display::show("Memora siap");
 }

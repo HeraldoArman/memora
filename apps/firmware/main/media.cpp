@@ -11,8 +11,6 @@
 #include "esp_capture.h"
 #include "esp_capture_types.h"
 #include "esp_audio_enc_default.h"
-#include "esp_video_enc_default.h"
-#include "impl/esp_capture_video_dvp_src.h"
 #include "freertos/FreeRTOS.h"
 
 #include "hardware.h"
@@ -36,9 +34,7 @@ struct PdmMicrophoneSource {
     bool started = false;
 };
 
-i2c_master_bus_handle_t s_camera_sccb_bus = nullptr;
 PdmMicrophoneSource s_microphone;
-esp_capture_video_src_if_t* s_camera = nullptr;
 esp_capture_handle_t s_capture = nullptr;
 
 PdmMicrophoneSource* microphone_from_base(esp_capture_audio_src_if_t* base) {
@@ -50,7 +46,7 @@ esp_capture_err_t microphone_open(esp_capture_audio_src_if_t*) {
 }
 
 esp_capture_err_t microphone_codecs(esp_capture_audio_src_if_t*,
-                                    const esp_capture_format_id_t** codecs, uint8_t* count) {
+                                     const esp_capture_format_id_t** codecs, uint8_t* count) {
     static const esp_capture_format_id_t kCodecs[] = {ESP_CAPTURE_FMT_ID_PCM};
     *codecs = kCodecs;
     *count = 1;
@@ -58,7 +54,7 @@ esp_capture_err_t microphone_codecs(esp_capture_audio_src_if_t*,
 }
 
 esp_capture_err_t microphone_set_caps(esp_capture_audio_src_if_t* base,
-                                      const esp_capture_audio_info_t* caps) {
+                                       const esp_capture_audio_info_t* caps) {
     if (caps == nullptr || caps->format_id != ESP_CAPTURE_FMT_ID_PCM || caps->channel != 1 ||
         caps->bits_per_sample != 16) {
         return ESP_CAPTURE_ERR_NOT_SUPPORTED;
@@ -68,8 +64,8 @@ esp_capture_err_t microphone_set_caps(esp_capture_audio_src_if_t* base,
 }
 
 esp_capture_err_t microphone_negotiate(esp_capture_audio_src_if_t* base,
-                                       esp_capture_audio_info_t* input,
-                                       esp_capture_audio_info_t* output) {
+                                        esp_capture_audio_info_t* input,
+                                        esp_capture_audio_info_t* output) {
     if (input == nullptr || output == nullptr) {
         return ESP_CAPTURE_ERR_INVALID_ARG;
     }
@@ -104,7 +100,7 @@ esp_capture_err_t microphone_start(esp_capture_audio_src_if_t* base) {
 }
 
 esp_capture_err_t microphone_read(esp_capture_audio_src_if_t* base,
-                                  esp_capture_stream_frame_t* frame) {
+                                   esp_capture_stream_frame_t* frame) {
     PdmMicrophoneSource* source = microphone_from_base(base);
     if (!source->started || frame == nullptr || frame->data == nullptr || frame->size <= 0) {
         return ESP_CAPTURE_ERR_INVALID_ARG;
@@ -112,7 +108,7 @@ esp_capture_err_t microphone_read(esp_capture_audio_src_if_t* base,
 
     std::size_t bytes_read = 0;
     const esp_err_t err = i2s_channel_read(source->channel, frame->data, frame->size, &bytes_read,
-                                           1000);
+                                            1000);
     if (err != ESP_OK || bytes_read == 0) {
         ESP_LOGE(kTag, "PDM microphone read failed: %s", esp_err_to_name(err));
         return ESP_CAPTURE_ERR_INTERNAL;
@@ -158,23 +154,6 @@ esp_capture_err_t microphone_close(esp_capture_audio_src_if_t*) {
 esp_capture_err_t capture_event(esp_capture_event_t event, void*) {
     ESP_LOGI(kTag, "capture event=%d", static_cast<int>(event));
     return ESP_CAPTURE_ERR_OK;
-}
-
-bool init_camera_sccb_bus() {
-    i2c_master_bus_config_t bus_config = {};
-    bus_config.i2c_port = memora::hardware::kCameraSccbI2cPort;
-    bus_config.sda_io_num = memora::hardware::kCameraSda;
-    bus_config.scl_io_num = memora::hardware::kCameraScl;
-    bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
-    bus_config.glitch_ignore_cnt = 7;
-    bus_config.flags.enable_internal_pullup = true;
-
-    const esp_err_t err = i2c_new_master_bus(&bus_config, &s_camera_sccb_bus);
-    if (err != ESP_OK) {
-        ESP_LOGE(kTag, "camera SCCB bus failed: %s", esp_err_to_name(err));
-        return false;
-    }
-    return true;
 }
 
 bool init_microphone() {
@@ -223,53 +202,22 @@ bool init() {
                  static_cast<int>(audio_encoder_result));
         return false;
     }
-    const auto video_encoder_result = esp_video_enc_register_default();
-    if (video_encoder_result != 0) {
-        ESP_LOGE(kTag, "video encoder registration failed: %d",
-                 static_cast<int>(video_encoder_result));
-        return false;
-    }
-    ESP_LOGI(kTag, "default H264 and Opus encoders registered");
+    ESP_LOGI(kTag, "Opus audio encoder registered");
 
-    if (!init_camera_sccb_bus() || !init_microphone()) {
-        return false;
-    }
-
-    esp_capture_video_dvp_src_cfg_t camera_config = {};
-    camera_config.buf_count = 2;
-    camera_config.pwr_pin = -1;
-    camera_config.reset_pin = -1;
-    camera_config.xclk_pin = memora::hardware::kCameraXclk;
-    camera_config.data[0] = memora::hardware::kCameraY2;
-    camera_config.data[1] = memora::hardware::kCameraY3;
-    camera_config.data[2] = memora::hardware::kCameraY4;
-    camera_config.data[3] = memora::hardware::kCameraY5;
-    camera_config.data[4] = memora::hardware::kCameraY6;
-    camera_config.data[5] = memora::hardware::kCameraY7;
-    camera_config.data[6] = memora::hardware::kCameraY8;
-    camera_config.data[7] = memora::hardware::kCameraY9;
-    camera_config.vsync_pin = memora::hardware::kCameraVsync;
-    camera_config.href_pin = memora::hardware::kCameraHref;
-    camera_config.pclk_pin = memora::hardware::kCameraPclk;
-    camera_config.xclk_freq = 10000000;
-    camera_config.i2c_port = memora::hardware::kCameraSccbI2cPort;
-    s_camera = esp_capture_new_video_dvp_src(&camera_config);
-    if (s_camera == nullptr) {
-        ESP_LOGE(kTag, "OV3660 DVP source allocation failed");
+    if (!init_microphone()) {
         return false;
     }
 
     esp_capture_cfg_t capture_config = {};
     capture_config.sync_mode = ESP_CAPTURE_SYNC_MODE_SYSTEM;
     capture_config.audio_src = &s_microphone.base;
-    capture_config.video_src = s_camera;
     const esp_capture_err_t err = esp_capture_open(&capture_config, &s_capture);
     if (err != ESP_CAPTURE_ERR_OK) {
         ESP_LOGE(kTag, "capture graph open failed: %d", static_cast<int>(err));
         return false;
     }
     esp_capture_set_event_cb(s_capture, capture_event, nullptr);
-    ESP_LOGI(kTag, "OV3660 camera + PDM microphone capture graph ready");
+    ESP_LOGI(kTag, "PDM microphone capture graph ready (audio only)");
     return true;
 }
 

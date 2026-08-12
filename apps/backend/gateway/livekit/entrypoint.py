@@ -25,6 +25,8 @@ from tools import ToolContext
 
 log = logging.getLogger(__name__)
 
+BRIDGE_IDENTITY_PREFIX = "memora-video-bridge-"
+
 
 async def entrypoint(ctx: JobContext) -> None:
     """Per-room job: build AgentSession with Gemini RealtimeModel."""
@@ -241,10 +243,16 @@ async def entrypoint(ctx: JobContext) -> None:
             participant.identity,
         )
         if publication.kind == rtc.TrackKind.KIND_VIDEO:
-            log.info("spawning video loop for InsightFace (track from %s)", participant.identity)
-            asyncio.create_task(
-                handle_video_track(track, room, tool_ctx, scene_understander, obs_engine)
-            )
+            if participant.identity.startswith(BRIDGE_IDENTITY_PREFIX):
+                log.info(
+                    "spawning video loop for InsightFace (track from bridge %s)",
+                    participant.identity,
+                )
+                asyncio.create_task(
+                    handle_video_track(track, room, tool_ctx, scene_understander, obs_engine)
+                )
+            else:
+                log.info("ignoring video track from non-bridge %s", participant.identity)
         elif publication.kind == rtc.TrackKind.KIND_AUDIO:
             log.info(
                 "audio track subscribed from %s — AgentSession handles audio input automatically",
@@ -280,10 +288,17 @@ async def entrypoint(ctx: JobContext) -> None:
                 log.info("subscribing to existing track: sid=%s kind=%s", pub.sid, pub.kind)
                 pub.set_subscribed(True)
             if pub.subscribed and pub.track and pub.kind == rtc.TrackKind.KIND_VIDEO:
-                log.info("spawning video loop for existing video track from %s", p.identity)
-                asyncio.create_task(
-                    handle_video_track(pub.track, room, tool_ctx, scene_understander, obs_engine)
-                )
+                if p.identity.startswith(BRIDGE_IDENTITY_PREFIX):
+                    log.info(
+                        "spawning video loop for existing video track from bridge %s", p.identity
+                    )
+                    asyncio.create_task(
+                        handle_video_track(
+                            pub.track, room, tool_ctx, scene_understander, obs_engine
+                        )
+                    )
+                else:
+                    log.info("ignoring existing video track from non-bridge %s", p.identity)
 
     # --- Wire data channel for text prompts ---
     @room.on("data_received")
