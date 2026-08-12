@@ -113,11 +113,15 @@ async def entrypoint(ctx: JobContext) -> None:
 
     async def _on_extract(text: str, sid: str | None) -> None:
         log.info("on_extract triggered: text=%r sid=%s", text[:200], sid)
-        from pipeline.runner import PipelineRunner
+        try:
+            from pipeline.runner import PipelineRunner
 
-        await PipelineRunner(text_embedder=text_embedder, text_index=text_index).run(
-            text, session_id=sid
-        )
+            await PipelineRunner(text_embedder=text_embedder, text_index=text_index).run(
+                text, session_id=sid
+            )
+            log.info("extraction pipeline completed")
+        except Exception:  # noqa: BLE001
+            log.warning("extraction failed: %s", exc_info=True)
 
     # --- Create display ---
     display = Display(room)
@@ -142,6 +146,7 @@ async def entrypoint(ctx: JobContext) -> None:
     planner = ProactivePlanner(
         reminder_service=tool_ctx.reminder_service,
         shopping_service=tool_ctx.shopping_service,
+        text_embedder=text_embedder,
     )
     log.info("proactive planner created")
 
@@ -187,9 +192,13 @@ async def entrypoint(ctx: JobContext) -> None:
             )
         )
 
-    # --- Wire display + extraction via conversation_item_added ---
+    # --- Wire display + extraction + context refresh via conversation_item_added ---
+    _user_turn_count = 0
+    _CONTEXT_REFRESH_INTERVAL = 5
+
     @session.on("conversation_item_added")
     def _on_conversation_item(ev):
+        nonlocal _user_turn_count
         try:
             item = ev.item
             if not isinstance(item, ChatMessage):
@@ -211,13 +220,17 @@ async def entrypoint(ctx: JobContext) -> None:
                     asyncio.create_task(agent_log.emit("assistant", text))
                 else:
                     log.debug("assistant message has no text content, skipping display")
-            # Extraction: fire on user messages (turn boundary)
+            # Extraction + periodic context refresh: fire on user messages (turn boundary)
             if item.role == "user":
                 text = item.text_content or ""
-                if text and agent._on_extract:
+                if text:
                     log.info("user turn detected, triggering extraction: %r", text[:200])
-                    asyncio.create_task(_safe_extract(text, session_id))
-                elif not text:
+                    asyncio.create_task(_on_extract(text, session_id))
+                    _user_turn_count += 1
+                    if _user_turn_count % _CONTEXT_REFRESH_INTERVAL == 0:
+                        log.info("turn %d → refreshing context", _user_turn_count)
+                        asyncio.create_task(agent._refresh_context())
+                else:
                     log.debug("user message has no text content, skipping extraction")
         except Exception:  # noqa: BLE001
             log.debug("conversation_item_added parse failed", exc_info=True)
@@ -333,18 +346,6 @@ async def entrypoint(ctx: JobContext) -> None:
         log.info("observation engine stopped")
         await session.aclose()
         log.info("room session torn down for %s", room.name)
-
-
-async def _safe_extract(text: str, session_id: str | None) -> None:
-    """Run extraction pipeline, swallow errors so they don't kill the session."""
-    try:
-        log.info("extraction pipeline starting: text=%r sid=%s", text[:200], session_id)
-        from pipeline.runner import PipelineRunner
-
-        await PipelineRunner().run(text, session_id=session_id)
-        log.info("extraction pipeline completed")
-    except Exception:  # noqa: BLE001
-        log.warning("extraction failed: %s", exc_info=True)
 
 
 async def _init_stores() -> None:

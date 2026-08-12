@@ -42,7 +42,10 @@ async def handle_video_track(
     sampler = FrameSampler(video_stream)
     recognizer = FaceRecognizer()
 
+    scene_task: asyncio.Task | None = None  # ponytail: single-flight guard for scene understanding
+
     async def _video_loop() -> None:
+        nonlocal scene_task
         log.info("video loop started — sampling frames for InsightFace + scene understanding")
         frame_count = 0
         try:
@@ -75,32 +78,19 @@ async def handle_video_track(
                             tool_ctx.last_face = None
 
                     # Step 3: scene understanding every 5 frames (~5s at 1 FPS)
-                    if scene_understander is not None and frame_count % 5 == 0:
+                    # ponytail: single-flight guard — skip if previous call still in flight.
+                    # Prevents task pile-up on a hung Gemini call AND out-of-order last_scene
+                    # writes (old slow response overwriting a newer location).
+                    if (
+                        scene_understander is not None
+                        and frame_count % 5 == 0
+                        and (scene_task is None or scene_task.done())
+                    ):
                         jpeg = _encode_jpeg(bgr)
                         if jpeg:
-                            try:
-                                scene = await scene_understander.understand(jpeg)
-                                if scene:
-                                    tool_ctx.last_scene = scene
-                                    log.info(
-                                        "scene understood: location=%s activity=%s confidence=%.2f",
-                                        scene.get("location"),
-                                        scene.get("activity"),
-                                        scene.get("confidence", 0),
-                                    )
-                                    if obs_engine is not None:
-                                        from dto.observations import SceneObservation
-
-                                        await obs_engine.emit(
-                                            SceneObservation(
-                                                location=scene.get("location"),
-                                                objects=scene.get("objects", []),
-                                                activity=scene.get("activity"),
-                                                confidence=scene.get("confidence", 0.8),
-                                            )
-                                        )
-                            except Exception:  # noqa: BLE001
-                                log.debug("scene understanding failed on frame %d", frame_count)
+                            scene_task = asyncio.create_task(
+                                _understand_scene(jpeg, tool_ctx, scene_understander, obs_engine)
+                            )
 
                     del bgr, faces
                     if frame_count % 5 == 0:
@@ -203,6 +193,33 @@ async def _update_last_face(detected, tool_ctx, obs_engine=None) -> None:
             )
     except Exception:  # noqa: BLE001
         log.exception("face lookup failed")
+
+
+async def _understand_scene(jpeg: bytes, tool_ctx, scene_understander, obs_engine=None) -> None:
+    """Run scene understanding off the video loop so face recognition never blocks."""
+    try:
+        scene = await scene_understander.understand(jpeg)
+        if scene:
+            tool_ctx.last_scene = scene
+            log.info(
+                "scene understood: location=%s activity=%s confidence=%.2f",
+                scene.get("location"),
+                scene.get("activity"),
+                scene.get("confidence", 0),
+            )
+            if obs_engine is not None:
+                from dto.observations import SceneObservation
+
+                await obs_engine.emit(
+                    SceneObservation(
+                        location=scene.get("location"),
+                        objects=scene.get("objects", []),
+                        activity=scene.get("activity"),
+                        confidence=scene.get("confidence", 0.8),
+                    )
+                )
+    except Exception:  # noqa: BLE001
+        log.debug("scene understanding failed")
 
 
 # --- self-check: _update_last_face with None repo is a no-op ---

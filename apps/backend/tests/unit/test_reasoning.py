@@ -424,3 +424,43 @@ class TestObservationEngineWiring:
         agent = MemoraAgent(tool_ctx=ctx, context_engine=engine)
         text = await agent._build_context_text()
         assert "Asep" in text
+
+
+class TestContextRefresh:
+    """Do Soon #3: periodic context refresh via _refresh_context()."""
+
+    async def test_refresh_updates_instructions(self) -> None:
+        ctx = ToolContext()
+        engine = AsyncMock()
+        engine.build = AsyncMock(return_value=(None, "Fakta baru: Budi suka kopi"))
+        agent = MemoraAgent(tool_ctx=ctx, context_engine=engine)
+        agent.update_instructions = AsyncMock()
+        await agent._refresh_context()
+        agent.update_instructions.assert_awaited_once()
+        instructions = agent.update_instructions.await_args.args[0]
+        assert "Budi suka kopi" in instructions
+
+    async def test_refresh_skips_empty_context(self) -> None:
+        ctx = ToolContext()
+        engine = AsyncMock()
+        engine.build = AsyncMock(return_value=(None, "(belum ada konteks)"))
+        agent = MemoraAgent(tool_ctx=ctx, context_engine=engine)
+        agent.update_instructions = AsyncMock()
+        await agent._refresh_context()
+        agent.update_instructions.assert_not_awaited()
+
+    async def test_refresh_no_context_engine(self) -> None:
+        ctx = ToolContext()
+        agent = MemoraAgent(tool_ctx=ctx)
+        agent.update_instructions = AsyncMock()
+        await agent._refresh_context()
+        agent.update_instructions.assert_not_awaited()
+
+    async def test_refresh_exception_keeps_existing(self) -> None:
+        ctx = ToolContext()
+        engine = AsyncMock()
+        engine.build = AsyncMock(side_effect=RuntimeError("DB down"))
+        agent = MemoraAgent(tool_ctx=ctx, context_engine=engine)
+        agent.update_instructions = AsyncMock()
+        await agent._refresh_context()
+        agent.update_instructions.assert_not_awaited()

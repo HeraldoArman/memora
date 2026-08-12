@@ -108,7 +108,7 @@ The planner runs as an `asyncio.create_task` with a 30s sleep loop. When it find
 
 ## 5. `_safe_extract` vs `conversation_item_added` — Double Extraction
 
-**Severity:** P2
+**Severity:** P2 ~~P1 bug~~ → **Fixed**
 
 **Where:** `gateway/livekit/entrypoint.py:114-120` (`_on_extract`), `entrypoint.py:328-337` (`_safe_extract`), `entrypoint.py:183-214` (`_on_conversation_item`)
 
@@ -124,9 +124,11 @@ The `_on_extract` callback (passed to `MemoraAgent`) and `_safe_extract` (called
 
 **Impact:** The `TextMemoryIndex` never gets populated from live conversations. It only works if someone manually runs `pipeline/runner.py --verify`. The ContextEngine's retrieval will return empty results from the text index, falling back to graph-only retrieval.
 
-**Fix:** Replace `_safe_extract` call with `_on_extract` call in `conversation_item_added`, or pass `text_embedder` + `text_index` to `_safe_extract`.
+**Fix:** ~~Replace `_safe_extract` call with `_on_extract` call in `conversation_item_added`, or pass `text_embedder` + `text_index` to `_safe_extract`.~~
 
-**Verdict:** P1 bug. Not a race condition, but a wiring bug that defeats Step 2's text index. Fix immediately.
+**Fixed (2026-08-12):** Removed `_safe_extract` entirely. Added try/except to `_on_extract`. `conversation_item_added` now calls `_on_extract` directly, so the extraction pipeline uses `text_embedder` + `text_index`. The `TextMemoryIndex` is now populated from live conversations.
+
+**Verdict:** Fixed.
 
 ---
 
@@ -201,7 +203,7 @@ If the same user message is delivered twice (LiveKit retry, network glitch), ext
 
 ## 10. Scene Understanding — Blocking Gemini Vision Call in Video Loop
 
-**Severity:** P1
+**Severity:** ~~P1~~ → **Fixed**
 
 **Where:** `gateway/livekit/track_handler.py:82`
 
@@ -213,16 +215,11 @@ This is an `await` inside the video loop. While the Gemini Vision API call is in
 
 **Impact:** Face recognition pauses every 5 frames for the duration of the scene understanding call. If Gemini Vision takes 500ms, face recognition has a 500ms gap every 5s. A person walking by during that gap could be missed.
 
-**Fix:** Run `scene_understander.understand(jpeg)` in a separate task:
+**Fix:** ~~Run `scene_understander.understand(jpeg)` in a separate task.~~
 
-```python
-if frame_count % 5 == 0:
-    jpeg = _encode_jpeg(bgr)
-    if jpeg:
-        asyncio.create_task(_understand_scene(jpeg, tool_ctx, obs_engine))
-```
+**Fixed (2026-08-12):** Extracted scene understanding into `_understand_scene()` and fired as `asyncio.create_task(_understand_scene(...))`. Face recognition continues unblocked while scene understanding runs in parallel.
 
-**Verdict:** P1 — fix this. Face recognition should never block on scene understanding.
+**Verdict:** Fixed.
 
 ---
 
@@ -234,38 +231,19 @@ if frame_count % 5 == 0:
 | 2   | Fire-and-forget `obs_engine.emit` for SpeechObservation   | P2         | No (unbounded queue)            |
 | 3   | Observations emitted before engine starts                 | P1         | No (queue handles it)           |
 | 4   | Planner `generate_reply` concurrent with user speech      | P1         | No (interruption is desired)    |
-| 5   | `_safe_extract` doesn't use text_embedder/text_index      | **P1 bug** | **Yes — fix now**               |
+| 5   | `_safe_extract` doesn't use text_embedder/text_index      | ~~P1 bug~~ | **Fixed (2026-08-12)**          |
 | 6   | `build_registry()` lazy singleton                         | P2         | No (asyncio-safe)               |
 | 7   | ONNX session not thread-safe for multi-participant        | P1         | No (single-participant only)    |
 | 8   | WorkingMemory 30s TTL on device data                      | P2         | No (by design)                  |
 | 9   | Double extraction on duplicate messages                   | P2         | No (Consolidator dedups)        |
-| 10  | Scene understanding blocks face recognition               | P1         | **Yes — fix when noticed**      |
+| 10  | Scene understanding blocks face recognition               | ~~P1~~     | **Fixed (2026-08-12)**          |
 
-## Immediate Fixes
+## Immediate Fixes (both applied 2026-08-12)
 
-### Fix 5: Wire `_on_extract` instead of `_safe_extract`
+### Fix 5: Wire `_on_extract` instead of `_safe_extract` — ✅ Fixed
 
-In `entrypoint.py:conversation_item_added`, replace `_safe_extract` with `_on_extract` so the text embedder + index are used:
+Removed `_safe_extract` entirely. Added try/except to `_on_extract`. `conversation_item_added` now calls `_on_extract` directly, so the extraction pipeline uses `text_embedder` + `text_index`. The `TextMemoryIndex` is now populated from live conversations.
 
-```python
-# Before:
-asyncio.create_task(_safe_extract(text, session_id))
+### Fix 10: Non-blocking scene understanding — ✅ Fixed
 
-# After:
-asyncio.create_task(_on_extract(text, session_id))
-```
-
-Or better, remove `_safe_extract` entirely and add error handling to `_on_extract`.
-
-### Fix 10: Non-blocking scene understanding
-
-In `track_handler.py`, fire scene understanding as a separate task so face recognition never blocks:
-
-```python
-if scene_understander is not None and frame_count % 5 == 0:
-    jpeg = _encode_jpeg(bgr)
-    if jpeg:
-        asyncio.create_task(_understand_scene_async(jpeg, tool_ctx, scene_understander, obs_engine))
-```
-
-Both fixes are <10 lines each.
+Extracted scene understanding into `_understand_scene()` in `track_handler.py`. Fired as `asyncio.create_task(_understand_scene(...))` instead of `await scene_understander.understand(jpeg)` inline. Face recognition continues unblocked while scene understanding runs in parallel.

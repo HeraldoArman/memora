@@ -83,6 +83,23 @@ class MemoraAgent(Agent):
             self._planner.start(self._get_context, self._on_proactive)
             log.info("on_enter: proactive planner started")
 
+    async def _refresh_context(self) -> None:
+        """Rebuild context + update_instructions mid-session (event-driven refresh).
+
+        Called periodically from entrypoint (every N user turns) so the system
+        prompt stays fresh as the conversation progresses.
+        """
+        if self._context_engine is None:
+            return
+        try:
+            text = await self._build_context_text()
+            if text and text != "(belum ada konteks)":
+                instructions = build_system_instruction(text)
+                log.info("refresh_context: update_instructions with %d chars", len(text))
+                await self.update_instructions(instructions)
+        except Exception:  # noqa: BLE001
+            log.warning("refresh_context failed, keeping existing instructions", exc_info=True)
+
     async def _build_context_text(self) -> str:
         """Build context text from ContextEngine using current tool_ctx state."""
         from dto.observations import CurrentContext

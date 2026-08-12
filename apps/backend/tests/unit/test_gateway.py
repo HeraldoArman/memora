@@ -17,7 +17,7 @@ from vector.index import FaceIndex
 from vector.repository import FaceRepository
 
 from gateway.livekit.entrypoint import _init_stores, entrypoint
-from gateway.livekit.track_handler import _encode_jpeg, _update_last_face
+from gateway.livekit.track_handler import _encode_jpeg, _understand_scene, _update_last_face
 from tools import ToolContext
 
 
@@ -210,3 +210,53 @@ class TestUpdateLastFaceEmitsObservation:
         emitted = obs.emit.await_args.args[0]
         assert emitted.person_id is None
         assert emitted.is_known is False
+
+
+class TestUnderstandScene:
+    """Fix #10: _understand_scene runs scene understanding off the video loop."""
+
+    async def test_scene_updates_tool_ctx(self) -> None:
+        ctx = ToolContext()
+        su = AsyncMock()
+        su.understand = AsyncMock(
+            return_value={
+                "location": "apotek",
+                "objects": ["obat"],
+                "activity": "beli obat",
+                "confidence": 0.9,
+            }
+        )
+        await _understand_scene(b"jpeg", ctx, su)
+        assert ctx.last_scene is not None
+        assert ctx.last_scene["location"] == "apotek"
+
+    async def test_scene_emits_observation(self) -> None:
+        ctx = ToolContext()
+        su = AsyncMock()
+        su.understand = AsyncMock(
+            return_value={
+                "location": "dapur",
+                "objects": [],
+                "activity": "masak",
+                "confidence": 0.8,
+            }
+        )
+        obs = AsyncMock()
+        await _understand_scene(b"jpeg", ctx, su, obs)
+        obs.emit.assert_awaited_once()
+        emitted = obs.emit.await_args.args[0]
+        assert emitted.location == "dapur"
+
+    async def test_no_scene_no_update(self) -> None:
+        ctx = ToolContext()
+        su = AsyncMock()
+        su.understand = AsyncMock(return_value=None)
+        await _understand_scene(b"jpeg", ctx, su)
+        assert ctx.last_scene is None
+
+    async def test_exception_no_crash(self) -> None:
+        ctx = ToolContext()
+        su = AsyncMock()
+        su.understand = AsyncMock(side_effect=RuntimeError("API down"))
+        await _understand_scene(b"jpeg", ctx, su)
+        assert ctx.last_scene is None

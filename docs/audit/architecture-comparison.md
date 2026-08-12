@@ -90,6 +90,8 @@ The implementation follows the proposal's three-layer architecture (Perception �
 
 **Better approach?** The proposal's fully event-driven approach is more efficient (fewer API calls) but harder to implement reliably. The implementation's VAD-based turn detection is simpler and sufficient for the MVP. Scene-change-triggered reasoning could be added later by having the ObservationEngine emit events that trigger `generate_reply` — but this risks over-talking. The current approach (agent only speaks when spoken to, except for proactive planner triggers) is safer for a dementia patient who might be confused by unprompted commentary.
 
+**Update (2026-08-12):** Periodic context refresh now implemented — `update_instructions()` is called every 5 user turns from `conversation_item_added`, keeping the system prompt's `{{context_package}}` section fresh as the conversation progresses.
+
 ---
 
 ### 2.4 Technology Stack
@@ -144,9 +146,11 @@ The implementation follows the proposal's three-layer architecture (Perception �
 - Context injected into system prompt via `update_instructions()` in `on_enter()`
 - Tools: `search_person`, `get_person`, `search_memory`, `conversation_summary`
 
-**Status: ✅ Fully implemented.** One gap: context is only built on `on_enter()` (session start), not on every turn. The PRD (context.md §5) describes "event-driven" context refresh. Currently the agent relies on tool calls for mid-conversation context updates, not automatic context refreshes.
+**Status: ✅ Fully implemented.** ~~One gap: context is only built on `on_enter()` (session start), not on every turn. The PRD (context.md §5) describes "event-driven" context refresh. Currently the agent relies on tool calls for mid-conversation context updates, not automatic context refreshes.~~
 
-**Trade-off:** Building context on every turn would be more accurate but adds latency (Gemini API call for summarization). The current approach (build once + tool calls) is faster and the tools provide fresh data on demand. For the MVP this is sufficient.
+**Update (2026-08-12):** Context is now refreshed every 5 user turns via `update_instructions()`, keeping the system prompt fresh.
+
+**Trade-off:** Building context on every turn would be more accurate but adds latency (Gemini API call for summarization). The current approach (build every 5 turns + tool calls) is a good balance — fresh enough for context drift, not so frequent as to add noticeable latency.
 
 ---
 
@@ -162,9 +166,11 @@ The implementation follows the proposal's three-layer architecture (Perception �
 - Cooldown: 5 min per (item, location) pair, 2 min for "Siapa ini?" trigger
 - "Siapa ini?" trigger: fires when unknown person is visible AND user is speaking
 
-**Status: ✅ Implemented.** One gap: `_keyword_overlap()` is a naive string match. "apotek" vs "beli paracetamol" doesn't overlap (the self-check test confirms this). The proposal's example (pharmacy → paracetamol) requires semantic understanding, not keyword matching.
+**Status: ✅ Implemented.** ~~One gap: `_keyword_overlap()` is a naive string match. "apotek" vs "beli paracetamol" doesn't overlap (the self-check test confirms this). The proposal's example (pharmacy → paracetamol) requires semantic understanding, not keyword matching.~~
 
-**Trade-off:** Semantic matching (embedding similarity between location and reminder text) would be more accurate but requires an embedding call per check (every 30s). Keyword overlap is free. For the MVP, keyword overlap is acceptable — the user can create reminders with location-specific keywords ("beli paracetamol di apotek").
+**Update (2026-08-12):** Semantic matching now implemented. The planner does a keyword pass first (free), then a batch embedding similarity pass for unmatched items (one API call per 30s cycle, threshold 0.5). "apotek" now matches "beli paracetamol" via cosine similarity. Falls back to keyword-only when `text_embedder` is None (backward compatible).
+
+**Trade-off:** ~~Semantic matching (embedding similarity between location and reminder text) would be more accurate but requires an embedding call per check (every 30s). Keyword overlap is free. For the MVP, keyword overlap is acceptable — the user can create reminders with location-specific keywords ("beli paracetamol di apotek").~~ Semantic matching costs one batch embed call per 30s cycle — acceptable cost for the accuracy improvement.
 
 ---
 
@@ -267,9 +273,11 @@ The implementation follows the proposal's three-layer architecture (Perception �
 
 **Which is better?** The implementation is close to the PRD but has one gap:
 
-- **Context refresh frequency:** The PRD says event-driven. The implementation builds context once on `on_enter()`. Mid-conversation context updates rely on tool calls (`search_person`, `current_scene`, etc.) rather than automatic context refreshes. This is simpler but means the system prompt's `{{context_package}}` section becomes stale as the conversation progresses.
+- ~~**Context refresh frequency:** The PRD says event-driven. The implementation builds context once on `on_enter()`. Mid-conversation context updates rely on tool calls (`search_person`, `current_scene`, etc.) rather than automatic context refreshes. This is simpler but means the system prompt's `{{context_package}}` section becomes stale as the conversation progresses.~~
 
-**Should we switch?** Add periodic context refreshes (e.g., rebuild on every 5th turn or when a new person is detected). This is a small change — call `update_instructions()` from a new event handler. Not urgent for the MVP.
+**Update (2026-08-12):** Context is now refreshed every 5 user turns via `MemoraAgent._refresh_context()` → `update_instructions()`. The system prompt stays fresh as new faces/scenes are detected and new memories are extracted during conversation.
+
+**Should we switch?** ~~Add periodic context refreshes (e.g., rebuild on every 5th turn or when a new person is detected). This is a small change — call `update_instructions()` from a new event handler. Not urgent for the MVP.~~ Done.
 
 ---
 
@@ -297,7 +305,7 @@ The implementation follows the proposal's three-layer architecture (Perception �
 
 | Feature                                | PRD Section            | Status                    |
 | -------------------------------------- | ---------------------- | ------------------------- |
-| Event-driven context refresh           | context.md §5          | ❌ (only on_enter)        |
+| Event-driven context refresh           | context.md §5          | ✅ (every 5 user turns)   |
 | Heartbeat monitoring for session       | reasoning_agent.md §5  | ❌ (handled by framework) |
 | Queue pending user requests on failure | reasoning_agent.md §13 | ❌                        |
 | Memory confidence learning             | memory_os.md §17       | ❌                        |
@@ -324,13 +332,13 @@ The memory pipeline (extraction → consolidation → graph + episodic storage) 
 
 ### Do Now (bugs found in audit):
 
-1. **Fix `_safe_extract` wiring bug** — the extraction pipeline is not using text embeddings. Replace `_safe_extract` with `_on_extract` in `conversation_item_added`. (See `race-conditions.md` §5)
-2. **Make scene understanding non-blocking** — fire `scene_understander.understand()` as a separate task so face recognition never pauses. (See `race-conditions.md` §10)
+1. ~~**Fix `_safe_extract` wiring bug**~~ — ✅ Fixed (2026-08-12). Removed `_safe_extract`, wired `_on_extract` with text embeddings in `conversation_item_added`. (See `race-conditions.md` §5)
+2. ~~**Make scene understanding non-blocking**~~ — ✅ Fixed (2026-08-12). Scene understanding fired as `asyncio.create_task` via `_understand_scene()`. (See `race-conditions.md` §10)
 
 ### Do Soon (product gaps):
 
-3. **Add periodic context refresh** — rebuild context every N turns or when a new person is detected, not just on `on_enter()`.
-4. **Improve proactive planner matching** — use embedding similarity instead of keyword overlap for location→reminder matching. This fixes the "apotek vs paracetamol" gap.
+3. ~~**Add periodic context refresh**~~ — ✅ Done (2026-08-12). `MemoraAgent._refresh_context()` rebuilds context + calls `update_instructions()` every 5 user turns, triggered from `conversation_item_added`.
+4. ~~**Improve proactive planner matching**~~ — ✅ Done (2026-08-12). Added `text_embedder` to `ProactivePlanner`. Keyword pass first (free), then batch embedding similarity (one API call per 30s cycle, threshold 0.5) for unmatched items. Fixes "apotek vs beli paracetamol" gap.
 
 ### Do Later (scale + polish):
 
