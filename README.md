@@ -12,39 +12,6 @@ Conventional aids — calendars, sticky notes, generic reminder apps — rely on
 
 Memora combines real-time facial and object recognition with natural voice interaction to help patients recognize familiar faces, places, and daily routines the moment confusion occurs — without needing to remember to ask for help. A connected caregiver dashboard shares this in real time with every family member involved in care, replacing the single-caregiver assumption with one built for how Indonesian families actually share care.
 
-## Business Model
-
-Memora uses a hybrid revenue model: a **one-time hardware purchase** combined with a **monthly subscription** for the AI service, sold through two channels.
-
-### B2C — Direct to Family
-
-Glasses sold near break-even as an entry point, with 0% installment options (3–6 months via Kredivo/Akulaku) to ease the price barrier for middle-class families. Revenue comes from three subscription tiers:
-
-| Tier    | Includes                                                                  |
-| ------- | ------------------------------------------------------------------------- |
-| Basic   | Face recognition, voice assistance, basic reminders (one caregiver)       |
-| Family  | Adds real-time multi-caregiver dashboard + disorientation/location alerts |
-| Family+ | Adds long-term memory history, weekly reports, priority support           |
-
-### B2B — Hospital & Institutional
-
-Glasses leased in bulk at lower per-unit cost on contract terms that suit hospital budget cycles, plus a per-bed/per-patient monthly dashboard license for staff monitoring multiple patients (per-seat SaaS pricing). An optional anonymized, consent-based data/insight partnership for clinical research adds long-term differentiation.
-
-### Pricing
-
-| Component           | Price        |
-| ------------------- | ------------ |
-| Smart Glasses       | USD 140      |
-| AI Subscription     | USD 11/month |
-| Annual Subscription | USD 132      |
-| **First-Year ARPU** | **USD 275**  |
-
-### Go-to-Market
-
-1. **Pilot & Validation (Month 0–6)** — 1–2 hospitals in Greater Jakarta, 10–20 dementia patients; collaborate with caregiver communities (e.g. ALZI).
-2. **Direct-to-Consumer Awareness (Month 6–12)** — B2B2C via hospitals/clinics, educational campaigns targeting the sandwich generation (30–50 year-olds caring for aging parents). Target ~4,000 adopters in year one.
-3. **Scale & Institutional Expansion (Month 12+)** — Expand partnerships with hospitals, insurers, and elderly care centers; introduce regional language support.
-
 ## Architecture
 
 ```mermaid
@@ -453,3 +420,36 @@ Husky pre-commit runs lint-staged: Ruff fix + format on `.py`, Prettier on JS/TS
 - The ESP32-S3 firmware is a skeleton (empty `main.cpp` and module stubs; `platformio.ini` not yet configured).
 - `whisper` is a declared dependency but unused (STT is handled by Gemini Live); `models/whisper/` is empty.
 - `perception/face/tracker.py` is implemented with a self-check but not yet wired into the live entrypoint.
+
+## Business Model
+
+Memora uses a hybrid revenue model: a **one-time hardware purchase** combined with a **monthly subscription** for the AI service, sold through two channels.
+
+### B2C — Direct to Family
+
+Glasses sold near break-even as an entry point, with 0% installment options (3–6 months via Kredivo/Akulaku) to ease the price barrier for middle-class families. Revenue comes from three subscription tiers:
+
+| Tier    | Includes                                                                  |
+| ------- | ------------------------------------------------------------------------- |
+| Basic   | Face recognition, voice assistance, basic reminders (one caregiver)       |
+| Family  | Adds real-time multi-caregiver dashboard + disorientation/location alerts |
+| Family+ | Adds long-term memory history, weekly reports, priority support           |
+
+### B2B — Hospital & Institutional
+
+Glasses leased in bulk at lower per-unit cost on contract terms that suit hospital budget cycles, plus a per-bed/per-patient monthly dashboard license for staff monitoring multiple patients (per-seat SaaS pricing). An optional anonymized, consent-based data/insight partnership for clinical research adds long-term differentiation.
+
+### Pricing
+
+| Component           | Price        |
+| ------------------- | ------------ |
+| Smart Glasses       | USD 140      |
+| AI Subscription     | USD 11/month |
+| Annual Subscription | USD 132      |
+| **First-Year ARPU** | **USD 275**  |
+
+### Go-to-Market
+
+1. **Pilot & Validation (Month 0–6)** — 1–2 hospitals in Greater Jakarta, 10–20 dementia patients; collaborate with caregiver communities (e.g. ALZI).
+2. **Direct-to-Consumer Awareness (Month 6–12)** — B2B2C via hospitals/clinics, educational campaigns targeting the sandwich generation (30–50 year-olds caring for aging parents). Target ~4,000 adopters in year one.
+3. **Scale & Institutional Expansion (Month 12+)** — Expand partnerships with hospitals, insurers, and elderly care centers; introduce regional language support.
