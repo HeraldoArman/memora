@@ -8,7 +8,6 @@ tool_ctx.last_face. Gemini sees video directly via RoomOptions(video_input=True)
 from __future__ import annotations
 
 import asyncio
-import gc
 import logging
 
 log = logging.getLogger(__name__)
@@ -93,8 +92,11 @@ async def handle_video_track(
                             )
 
                     del bgr, faces
-                    if frame_count % 5 == 0:
-                        gc.collect()
+                    # gc.collect() removed: it ran on the event-loop thread every ~10s
+                    # and froze the Gemini Live audio pump (stop-the-world). The ONNX
+                    # leak it fought is handled off-loop in recognizer._recycle_app()
+                    # (which gc.collect()s on its own executor thread). Let Python's
+                    # generational GC handle the rest.
                 except Exception:  # noqa: BLE001
                     log.exception("face recognize failed on frame %d", frame_count)
         except asyncio.CancelledError:
@@ -120,7 +122,10 @@ async def _update_last_face(detected, tool_ctx, obs_engine=None) -> None:
             getattr(detected.embedding, "shape", None),
             face_repo.size,
         )
-        result = face_repo.lookup(detected.embedding)
+        # Offload sync FAISS search (l2_normalize + index.search) off the event loop —
+        # matches detect_and_embed at line 56. Running it inline blocked the Gemini
+        # Live audio pump every frame.
+        result = await asyncio.to_thread(face_repo.lookup, detected.embedding)
         name = None
         if result.person_id and (result.is_known or result.is_possible):
             try:
