@@ -4,6 +4,47 @@ Context-aware AI memory assistant for people living with dementia. A wearable ES
 
 Python + C++ monorepo. Backend (FastAPI + LiveKit agent), web dashboard (Next.js), and ESP32-S3 firmware (skeleton).
 
+## Background
+
+Dementia affects more than 2 million people in Indonesia as of 2025, with over 30% of nearly 7 million elderly Indonesians showing signs of cognitive impairment (Ministry of Health, 2026). Alzheimer's accounts for 60–70% of cases, marked by progressive memory loss and difficulty recognizing familiar people and surroundings. Formal diagnosis and specialist care remain concentrated in major urban centers, leaving families in under-served regions to navigate this decline largely on their own.
+
+Conventional aids — calendars, sticky notes, generic reminder apps — rely on manual schedules and depend entirely on caregiver input. AI-powered wearable assistants have emerged abroad but remain purely reactive and built around a single in-home caregiver, a structure that doesn't reflect Indonesian families where care is often shared across relatives who don't live under the same roof.
+
+Memora combines real-time facial and object recognition with natural voice interaction to help patients recognize familiar faces, places, and daily routines the moment confusion occurs — without needing to remember to ask for help. A connected caregiver dashboard shares this in real time with every family member involved in care, replacing the single-caregiver assumption with one built for how Indonesian families actually share care.
+
+## Business Model
+
+Memora uses a hybrid revenue model: a **one-time hardware purchase** combined with a **monthly subscription** for the AI service, sold through two channels.
+
+### B2C — Direct to Family
+
+Glasses sold near break-even as an entry point, with 0% installment options (3–6 months via Kredivo/Akulaku) to ease the price barrier for middle-class families. Revenue comes from three subscription tiers:
+
+| Tier    | Includes                                                                  |
+| ------- | ------------------------------------------------------------------------- |
+| Basic   | Face recognition, voice assistance, basic reminders (one caregiver)       |
+| Family  | Adds real-time multi-caregiver dashboard + disorientation/location alerts |
+| Family+ | Adds long-term memory history, weekly reports, priority support           |
+
+### B2B — Hospital & Institutional
+
+Glasses leased in bulk at lower per-unit cost on contract terms that suit hospital budget cycles, plus a per-bed/per-patient monthly dashboard license for staff monitoring multiple patients (per-seat SaaS pricing). An optional anonymized, consent-based data/insight partnership for clinical research adds long-term differentiation.
+
+### Pricing
+
+| Component           | Price        |
+| ------------------- | ------------ |
+| Smart Glasses       | USD 140      |
+| AI Subscription     | USD 11/month |
+| Annual Subscription | USD 132      |
+| **First-Year ARPU** | **USD 275**  |
+
+### Go-to-Market
+
+1. **Pilot & Validation (Month 0–6)** — 1–2 hospitals in Greater Jakarta, 10–20 dementia patients; collaborate with caregiver communities (e.g. ALZI).
+2. **Direct-to-Consumer Awareness (Month 6–12)** — B2B2C via hospitals/clinics, educational campaigns targeting the sandwich generation (30–50 year-olds caring for aging parents). Target ~4,000 adopters in year one.
+3. **Scale & Institutional Expansion (Month 12+)** — Expand partnerships with hospitals, insurers, and elderly care centers; introduce regional language support.
+
 ## Architecture
 
 ```mermaid
