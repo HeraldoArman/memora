@@ -251,7 +251,7 @@ bool init() {
     camera_config.vsync_pin = memora::hardware::kCameraVsync;
     camera_config.href_pin = memora::hardware::kCameraHref;
     camera_config.pclk_pin = memora::hardware::kCameraPclk;
-    camera_config.xclk_freq = 20000000;
+    camera_config.xclk_freq = 10000000;
     camera_config.i2c_port = memora::hardware::kCameraSccbI2cPort;
     s_camera = esp_capture_new_video_dvp_src(&camera_config);
     if (s_camera == nullptr) {

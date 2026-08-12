@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "cJSON.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -111,6 +112,13 @@ bool fetch_dashboard_token() {
 
 void on_state_changed(livekit_connection_state_t state, void*) {
     ESP_LOGI(kTag, "room state: %s", livekit_connection_state_str(state));
+    if (state == LIVEKIT_CONNECTION_STATE_CONNECTED) {
+        ESP_LOGI(kTag, "heap before media pipeline: free=%u largest=%u internal=%u largest_internal=%u",
+                 static_cast<unsigned>(esp_get_free_heap_size()),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+    }
     if (s_room != nullptr) {
         const auto reason = livekit_room_get_failure_reason(s_room);
         if (reason != LIVEKIT_FAILURE_REASON_NONE) {

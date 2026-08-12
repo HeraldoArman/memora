@@ -45,12 +45,17 @@ export async function POST(request: Request) {
   }
 
   const at = new AccessToken(apiKey, apiSecret, { identity, ttl: "2h" });
+  const isMonitor = identity === "h264-monitor";
   at.addGrant({
     roomJoin: true,
     room: roomName,
-    canPublish: true,
-    canSubscribe: true,
-    canPublishData: true,
+    canPublish: !isMonitor,
+    // The physical ESP32 has a microphone but no speaker. Prevent its
+    // LiveKit client from subscribing to the agent's audio track; the
+    // current ESP32 SDK still allocates a subscriber/renderer for it even
+    // when the application leaves room_options.subscribe empty.
+    canSubscribe: identity !== "memora-device",
+    canPublishData: !isMonitor,
   });
 
   const token = await at.toJwt();
