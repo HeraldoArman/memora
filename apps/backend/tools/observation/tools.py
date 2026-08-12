@@ -11,8 +11,16 @@ from tools.registry import ToolContext
 
 
 async def current_scene(args: dict, ctx: ToolContext) -> dict:
-    # bare-minimum: no scene understander — return unavailable
-    return {"available": False, "location": None, "activity": None}
+    s = ctx.last_scene
+    if s is None or s.get("location") is None:
+        return {"available": False, "location": None, "activity": None}
+    return {
+        "available": True,
+        "location": s["location"],
+        "objects": s.get("objects", []),
+        "activity": s.get("activity"),
+        "confidence": s.get("confidence", 0.8),
+    }
 
 
 async def visible_people(args: dict, ctx: ToolContext) -> dict:
@@ -27,8 +35,15 @@ async def visible_people(args: dict, ctx: ToolContext) -> dict:
 
 
 async def current_activity(args: dict, ctx: ToolContext) -> dict:
-    # bare-minimum: no scene understander
-    return {"available": False, "activity": None, "location": None}
+    s = ctx.last_scene
+    if s is None or s.get("activity") is None:
+        return {"available": False, "activity": None, "location": None}
+    return {
+        "available": True,
+        "activity": s["activity"],
+        "location": s.get("location"),
+        "confidence": s.get("confidence", 0.8),
+    }
 
 
 async def conversation_summary(args: dict, ctx: ToolContext) -> dict:

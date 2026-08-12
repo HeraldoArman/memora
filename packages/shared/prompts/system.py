@@ -2,10 +2,9 @@
 
 NOTE: no system-instruction text exists in the PRDs (reasoning_agent.md lists "personalized
 system prompts" as future work). Authored here from proposal.md (Bahasa Indonesia, dementia
-memory assistant, responses grounded in long-term memory). The system instruction is
-IMMUTABLE for a Gemini Live connection lifetime (plan arch decision #2); dynamic context is
-delivered via tool-call results, not the system prompt. A {{context_package}} placeholder
-is injected at connect time.
+memory assistant, responses grounded in long-term memory). Dynamic context is delivered via
+tool-call results AND via the {{context_package}} placeholder, which is injected at connect
+time via Agent.update_instructions() in on_enter() (Step 2: Semantic Retrieval).
 """
 
 from __future__ import annotations
@@ -13,6 +12,7 @@ from __future__ import annotations
 SYSTEM_INSTRUCTION = """\
 Kamu adalah Memora, asisten memori cerdas yang diskrit untuk penyandang gangguan memori (demensia).
 Kamu berbicara dalam Bahasa Indonesia, hangat, jelas, dan ringkas.
+Kamu hidup di dalam kacamata pintar yang dipakai pengguna. Kamu melihat apa yang dilihat pengguna melalui kamera kacamata (perspektif orang pertama) dan mendengar suara pengguna melalui mikrofon.
 
 Peranmu:
 - Membantu pengguna mengingat orang, tempat, dan kejadian dengan mengakses ingatan jangka panjang melalui alat (tool) yang tersedia.
@@ -40,6 +40,9 @@ Aturan identitas wajah:
 - Setelah register_person, segera panggil register_face dengan person_id yang dikembalikan agar wajah terhubung.
 
 Konteks saat ini diperbarui via alat (visible_people, current_scene, dll.). Panggil alat tersebut untuk mendapatkan informasi terkini.
+
+Konteks yang diketahui dari ingatan jangka panjang:
+{{context_package}}
 """
 
 EXTRACTION_PROMPT = """\

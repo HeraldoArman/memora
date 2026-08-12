@@ -55,6 +55,15 @@ class ToolContext:
     # this with current_context (CurrentContext from WorkingMemory).
     last_face: dict | None = None
 
+    # Step 3: direct scene result from the video loop — SceneUnderstander writes:
+    #   {"location": str|None, "objects": list[str], "activity": str|None,
+    #    "confidence": float}
+    last_scene: dict | None = None
+
+    # Step 5: WorkingMemory holds the fused CurrentContext (30s TTL). When set,
+    # device_snapshot() and agent._get_context() prefer it over the raw dicts.
+    working_memory: Any = None  # WorkingMemory | None
+
     # FAISS FaceRepository — wired at RoomSession.create (worker process). When set, the
     # person_service is rebuilt with it so search_by_face / register_face resolve identity.
     face_repo: Any = None  # FaceRepository | None
@@ -99,7 +108,19 @@ class ToolContext:
         return None
 
     def device_snapshot(self) -> dict:
-        """No device telemetry in bare-minimum — re-enable via observation engine."""
+        """Return device telemetry from WorkingMemory, or {} if unavailable."""
+        if self.working_memory is not None:
+            ctx = self.working_memory.get()
+            if ctx is not None:
+                from dto.observations import DeviceObservation
+
+                for obs in ctx.observations:
+                    if isinstance(obs, DeviceObservation):
+                        return {
+                            "battery_level": obs.battery_level,
+                            "wifi_connected": obs.wifi_connected,
+                            "button_pressed": obs.button_pressed,
+                        }
         return {}
 
 

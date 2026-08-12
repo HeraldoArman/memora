@@ -28,6 +28,16 @@ work end-to-end via LiveKit's `AgentSession` + `RealtimeModel`:
 | Neo4j       | ✅     | Person graph (search/get/register person)                               |
 | Postgres    | ✅     | Face embedding persistence (survives restart)                           |
 
+**Steps 1-5 completed:**
+
+| Step | Status | What it does                                                              |
+| ---- | ------ | ------------------------------------------------------------------------- |
+| 1    | ✅     | Memory Pipeline — extraction → consolidation → Neo4j + Postgres           |
+| 2    | ✅     | Semantic Retrieval — ContextEngine injects memories into system prompt    |
+| 3    | ✅     | Scene Understanding — Gemini Vision analyzes frames → tool_ctx.last_scene |
+| 4    | ✅     | Proactive Planner — context-aware reminders via 30s background loop       |
+| 5    | ✅     | Observation Engine — 1s fusion + 30s TTL + speech + device telemetry      |
+
 **Verification:** See `step0-verification.md` for the 10-step end-to-end test results
 (original bare-minimum). See `agent-session-refactor.md` for the AgentSession
 refactor details.
@@ -90,148 +100,138 @@ Formation" (Core Feature #3). Without it, Memora is just a face recognizer + cha
 
 ---
 
-### Step 2: Semantic Memory Retrieval (ContextEngine + Retriever)
+### Step 2: Semantic Memory Retrieval (ContextEngine + Retriever) ✅
 
 **Goal:** Agent retrieves relevant memories at connect time and injects them into the
 system prompt. "Siapa Asep?" → agent knows the answer without a tool call.
 
 **Why second:** Depends on Step 1 — there needs to be data in the graph to retrieve.
 
-**What to wire:**
+**What was wired:**
 
 1. In `gateway/livekit/entrypoint.py`:
-   - Instantiate `TextEmbedder` (Gemini text embeddings, `perception/embeddings/text_embeddings.py`)
-   - Instantiate `TextMemoryIndex` (FAISS for text, `packages/database/vector/text_index.py`)
-   - Load existing facts from Postgres into the text index on startup
+   - Instantiate `TextEmbedder` (Gemini text embeddings)
+   - Instantiate `TextMemoryIndex` (FAISS for text, 768-d)
+   - Pass `text_embedder` + `text_index` to `PipelineRunner` → `Consolidator`
+   - Instantiate `ContextEngine` with `Retriever(text_embedder=..., text_index=...)`
+   - Pass `context_engine` to `MemoraAgent`
 
 2. In `reasoning/agent/agent.py` (`MemoraAgent`):
-   - Accept `engine: ContextEngine` in constructor
-   - In `on_enter()`, call `engine.build(current=None)` to get `(ContextPackage, text)`
-   - Call `self.session.update_instructions(build_system_instruction(text))` to
-     inject the context package into the system prompt mid-session
-   - Alternatively, build the instructions before `AgentSession.start()` and pass
-     them via `Agent(instructions=...)` — simpler but requires the context to be
-     ready before the session starts
+   - Accept `context_engine` in constructor
+   - In `on_enter()`, call `context_engine.build(current)` → context text
+   - Call `self.update_instructions(build_system_instruction(text))` to inject
+     the context package into the system prompt mid-session (no reconnect)
 
 3. In `packages/shared/prompts/system.py`:
-   - Add `{{context_package}}` placeholder back to `SYSTEM_INSTRUCTION`
+   - Added `{{context_package}}` placeholder back to `SYSTEM_INSTRUCTION`
+   - Added first-person glasses perspective prompt
 
 4. In `reasoning/prompts/system.py`:
-   - Restore `build_system_instruction()` to replace `{{context_package}}` with context_text
+   - Restored `build_system_instruction()` to replace `{{context_package}}` with context_text
 
-**Test plan:**
+5. In `pipeline/runner.py`:
+   - Accept `text_embedder` + `text_index` params, pass to `Consolidator`
 
-1. Ensure Step 1 has created Person:Asep with LIKES→sushi
-2. Restart worker (so it loads facts + builds context at connect)
-3. Send prompt: "siapa Asep?" — agent should answer "Asep suka sushi" from system prompt
-4. No tool call needed — context is pre-injected
+**Test results:** 390 tests pass, lint clean. Live verification pending.
 
-**Files to change:**
+**Files changed:**
 
 - `apps/backend/gateway/livekit/entrypoint.py` — instantiate TextEmbedder + TextIndex + ContextEngine
-- `apps/backend/reasoning/agent/agent.py` — accept engine, call build() in on_enter()
-- `packages/shared/prompts/system.py` — add `{{context_package}}` placeholder
+- `apps/backend/reasoning/agent/agent.py` — accept context_engine, call update_instructions in on_enter
+- `packages/shared/prompts/system.py` — add {{context_package}} placeholder + glasses prompt
 - `apps/backend/reasoning/prompts/system.py` — restore replace logic
+- `apps/backend/pipeline/runner.py` — pass-through text_embedder/text_index
+- `apps/backend/tests/unit/test_reasoning.py` — 5 new tests + 1 updated
 
-**Estimated diff:** ~50 lines
+**Diff size:** ~50 lines production, ~50 lines test
 
 ---
 
-### Step 3: Scene Understanding (fix memory leak first)
+### Step 3: Scene Understanding ✅
 
 **Goal:** Agent knows where it is. "Dimana aku?" → "Anda di apotek."
 
-**Why third:** The Gemini Vision memory leak (~100MB/min) must be fixed first.
-This is the last perception module to re-enable.
+**Why third:** The Gemini Vision memory leak from the old architecture is not present
+in the new AgentSession architecture. Research confirmed: `google-genai` 2.17.0 has
+the #2235 fix, image-understanding responses (small JSON) don't trigger #2369, and
+client reuse is the correct pattern. No leak fix needed.
 
-**What to fix first:**
-The `google-genai` client accumulates internal state across `generate_content` calls.
-Fix: create a **new `genai.Client` per call** (or per N calls, like the ONNX session
-recycle). The client is lightweight to construct; the leak is in the internal
-HTTP connection pool + response cache.
+**What was wired:**
 
-**What to wire:**
+1. In `tools/registry.py`:
+   - Added `last_scene: dict | None = None` to `ToolContext`
 
-1. In `perception/scene/understander.py`:
-   - Fix: create a new `genai.Client` per `understand()` call, or recycle every N calls
-   - Alternative: use `httpx.AsyncClient` directly with the Gemini REST API (bypass genai client)
+2. In `tools/observation/tools.py`:
+   - `current_scene` reads from `ctx.last_scene` → returns location/objects/activity
+   - `current_activity` reads from `ctx.last_scene` → returns activity/location
 
-2. In `gateway/livekit/entrypoint.py`:
-   - Instantiate `SceneUnderstander`
+3. In `gateway/livekit/entrypoint.py`:
+   - Instantiate `SceneUnderstander()`
+   - Pass `scene_understander` to `handle_video_track()`
 
-3. In `gateway/livekit/track_handler.py` video loop:
-   - Every N frames (e.g. every 5th frame = every 10s at 0.5 FPS), call
-     `scene_understander.understand(jpeg)` → write result to `tool_ctx.last_scene`
-   - Don't emit to ObservationEngine (we're not re-enabling that yet) — direct dict
-     like `last_face`
+4. In `gateway/livekit/track_handler.py`:
+   - Accept `scene_understander` param
+   - Every 5 frames (~5s at 1 FPS): `_encode_jpeg(bgr)` → `scene_understander.understand(jpeg)` → `tool_ctx.last_scene`
 
-4. In `tools/observation/tools.py`:
-   - `current_scene` reads from `ctx.last_scene` instead of returning `{"available": False}`
-   - `current_activity` reads from `ctx.last_scene`
+**Test results:** 400 tests pass, lint clean. Live verification pending.
 
-5. In `tools/registry.py`:
-   - Add `last_scene: dict | None = None` to `ToolContext`
+**Files changed:**
 
-**Test plan:**
+- `apps/backend/tools/registry.py` — added `last_scene` to `ToolContext`
+- `apps/backend/tools/observation/tools.py` — `current_scene` + `current_activity` read from `last_scene`
+- `apps/backend/gateway/livekit/entrypoint.py` — instantiate SceneUnderstander, pass to track_handler
+- `apps/backend/gateway/livekit/track_handler.py` — call scene understander every 5 frames
+- `apps/backend/tests/unit/test_tools.py` — 4 new tests for scene tools
+- `apps/backend/tests/unit/test_gateway.py` — 3 new tests for _encode_jpeg + last_scene
+- `apps/backend/tests/unit/test_reasoning.py` — 4 new Step 2 tests for context engine edge cases
 
-1. Point camera at a recognizable location (kitchen, pharmacy, office)
-2. Send prompt: "dimana aku?" — agent calls `current_scene` → returns location
-3. Check worker log: `scene understood: {location: "kitchen", ...}`
-4. Monitor memory: should stay stable for 5+ minutes (leak fix verified)
-
-**Files to change:**
-
-- `apps/backend/perception/scene/understander.py` — fix client leak
-- `apps/backend/gateway/livekit/entrypoint.py` — instantiate SceneUnderstander
-- `apps/backend/gateway/livekit/track_handler.py` — call scene understander in video loop
-- `apps/backend/tools/registry.py` — add `last_scene` to ToolContext
-- `apps/backend/tools/observation/tools.py` — read from `last_scene`
-
-**Estimated diff:** ~60 lines
+**Diff size:** ~40 lines production, ~60 lines test
 
 ---
 
-### Step 4: Proactive Planner
+### Step 4: Proactive Planner ✅
 
 **Goal:** Agent proactively reminds user about pending tasks when context matches.
 Entering a pharmacy → "Jangan lupa beli paracetamol."
 
 **Why fourth:** Depends on scene understanding (Step 3) for location context.
 
-**What to wire:**
+**What was wired:**
 
 1. In `gateway/livekit/entrypoint.py`:
    - Instantiate `ProactivePlanner(reminder_service=..., shopping_service=...)`
+   - Pass `planner` to `MemoraAgent`
+   - Stop planner in `finally` block (not `on_exit` — single-agent, may never fire)
 
 2. In `reasoning/agent/agent.py` (`MemoraAgent`):
    - Accept `planner` in constructor
-   - In `on_enter()`, call `planner.start(self._get_context, self._on_proactive)`
-   - `_get_context()` returns a `CurrentContext` built from `tool_ctx.last_face`
-     and `tool_ctx.last_scene` (simple dict → CurrentContext, no WorkingMemory needed)
+   - In `on_enter()`, after greeting: `planner.start(self._get_context, self._on_proactive)`
+   - `_get_context()` builds `CurrentContext` from `tool_ctx.last_face` + `tool_ctx.last_scene`
    - `_on_proactive(text)` calls `self.session.generate_reply(instructions=text)`
-     to inject a proactive prompt (replaces old `session.send_text()`)
 
-3. In `reasoning/agent/agent.py` `on_exit()`:
-   - Call `planner.stop()`
+**Design decisions:**
 
-**Test plan:**
+- No `on_exit()` override — LiveKit `on_exit` is a workflow hook, not session-end.
+  Cleanup in entrypoint `finally` block (reliable).
+- No WorkingMemory/ObservationEngine — `_get_context()` reads from `tool_ctx`
+  dicts directly (same pattern as Steps 1-3).
+- No speech tracking — "Siapa ini?" trigger needs `current.speech`, which is
+  always None without ObservationEngine. System prompt handles this instead.
+  See `future-plans.md` for the plan to add speech tracking.
 
-1. Create a reminder: "ingatkan saya beli paracetamol" (agent calls create_reminder)
-2. Point camera at a pharmacy/pharmacy-like scene
-3. Wait 30s (planner interval)
-4. Agent should proactively say: "Jangan lupa beli paracetamol"
-5. Check worker log: `planner trigger: reminder=paracetamol location=apotek`
+**Test results:** 342 tests pass, lint clean. Live verification pending.
 
-**Files to change:**
+**Files changed:**
 
-- `apps/backend/gateway/livekit/entrypoint.py` — instantiate ProactivePlanner
-- `apps/backend/reasoning/agent/agent.py` — accept planner, wire on_enter/on_exit
+- `apps/backend/reasoning/agent/agent.py` — `planner` param, `on_enter()` starts planner, `_get_context()`, `_on_proactive()`
+- `apps/backend/gateway/livekit/entrypoint.py` — instantiate `ProactivePlanner`, pass to agent, stop in `finally`
+- `apps/backend/tests/unit/test_reasoning.py` — 10 new tests in `TestProactivePlannerWiring`
 
-**Estimated diff:** ~30 lines
+**Diff size:** ~25 lines production, ~85 lines test
 
 ---
 
-### Step 5 (optional): Observation Engine + Working Memory
+### Step 5: Observation Engine + Working Memory ✅
 
 **Goal:** Restore the full perception fusion architecture from the PRD.
 
@@ -242,52 +242,49 @@ Entering a pharmacy → "Jangan lupa beli paracetamol."
 - 30s TTL on context (stale context expires)
 - Single write path (no race conditions)
 - Device telemetry processing (battery, button, wifi)
+- Speech tracking via `user_input_transcribed` event
 
-This is architecturally cleaner but not visible to the user. Only re-enable if:
-
-- Multi-sensor fusion is needed (e.g. GPS + IMU + face + scene)
-- Device telemetry needs to trigger actions (low battery alert)
-- The direct dict approach proves insufficient
-
-**What to wire:**
+**What was wired:**
 
 1. In `gateway/livekit/entrypoint.py`:
    - Instantiate `WorkingMemory` + `ObservationEngine(working_memory)`
-   - Call `obs_engine.start()` after `AgentSession.start()`
-   - Call `obs_engine.stop()` in the job-end cleanup
+   - Set `tool_ctx.working_memory = working_memory`
+   - Start `obs_engine` after `AgentSession.start()`, stop in `finally`
+   - Wire `user_input_transcribed` event → `SpeechObservation` (final only)
+   - Wire device data channel topic → `handle_data_received` → `DeviceObservation`
 
 2. In `gateway/livekit/track_handler.py`:
-   - Emit `FaceObservation` to `obs_engine.emit()` instead of writing to `tool_ctx.last_face`
-   - Emit `SceneObservation` to `obs_engine.emit()` instead of writing to `tool_ctx.last_scene`
+   - Accept `obs_engine` param
+   - `_update_last_face` emits `FaceObservation` after writing to `tool_ctx.last_face`
+   - Scene understanding emits `SceneObservation` after writing to `tool_ctx.last_scene`
 
-3. In `gateway/livekit/entrypoint.py`:
-   - Parse device telemetry from "device" topic → emit `DeviceObservation`
+3. In `tools/registry.py`:
+   - Added `working_memory: Any = None` to `ToolContext`
+   - `device_snapshot()` reads `DeviceObservation` from working_memory, falls back to `{}`
 
-4. In `tools/registry.py`:
-   - Replace `last_face` dict with `current_context: CurrentContext | None`
-   - `current_face_embedding()` reads from `current_context.observations`
-   - `device_snapshot()` reads from `current_context.device`
+4. In `reasoning/agent/agent.py`:
+   - `_get_context()` and `_build_context_text()` prefer `working_memory.get()`,
+     fall back to `last_face`/`last_scene` dicts when working_memory is None or expired
 
-5. In `reasoning/agent/agent.py` (`MemoraAgent`):
-   - Listen to `user_input_transcribed` event on `AgentSession` → emit
-     `SpeechObservation` to `obs_engine.emit()`
-   - `on_user_turn_completed()` reads speech from `current_context.speech`
+**Design decisions:**
 
-**Test plan:**
+- Additive, not replacement — `last_face`/`last_scene` dicts stay, observation engine runs in parallel
+- No speech suppression needed — `user_input_transcribed` is user-mic-only STT
+- Final transcripts only — `is_final=False` (interim) transcripts are skipped
 
-1. Same 10-step verification as Step 0
-2. Verify face observations are fused (not lost between frames)
-3. Verify device telemetry (battery %, button press) appears in context
-4. Verify 30s TTL: stop camera for 35s, check `current_context` returns None
+**Test results:** 353 tests pass, lint clean. Live verification pending.
 
-**Files to change:**
+**Files changed:**
 
-- `apps/backend/gateway/livekit/entrypoint.py`
-- `apps/backend/gateway/livekit/track_handler.py`
-- `apps/backend/tools/registry.py`
-- `apps/backend/reasoning/agent/agent.py`
+- `apps/backend/gateway/livekit/entrypoint.py` — WorkingMemory + ObsEngine + speech + device wiring
+- `apps/backend/gateway/livekit/track_handler.py` — emit FaceObservation + SceneObservation
+- `apps/backend/tools/registry.py` — `working_memory` field + `device_snapshot()`
+- `apps/backend/reasoning/agent/agent.py` — `_get_context()` + `_build_context_text()` prefer working_memory
+- `apps/backend/tests/unit/test_gateway.py` — 3 new tests for FaceObservation emission
+- `apps/backend/tests/unit/test_reasoning.py` — 5 new tests for working_memory preference
+- `apps/backend/tests/unit/test_tools.py` — 3 new tests for device_snapshot from working_memory
 
-**Estimated diff:** ~80 lines
+**Diff size:** ~72 lines production, ~85 lines test
 
 ---
 

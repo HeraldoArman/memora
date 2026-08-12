@@ -7,7 +7,7 @@ Tools are thin service callers. We build a ToolContext whose services are AsyncM
 from __future__ import annotations
 
 from datetime import datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import numpy as np
@@ -61,12 +61,33 @@ def _face_ctx() -> ToolContext:
 
 class TestObservationTools:
     async def test_current_scene_unavailable(self) -> None:
-        # bare-minimum: no scene understander → always unavailable
+        # no last_scene → unavailable
         assert await obs.current_scene({}, _ctx()) == {
             "available": False,
             "location": None,
             "activity": None,
         }
+
+    async def test_current_scene_available(self) -> None:
+        ctx = _ctx()
+        ctx.last_scene = {
+            "location": "apotek",
+            "objects": ["obat", "rak"],
+            "activity": "beli obat",
+            "confidence": 0.9,
+        }
+        result = await obs.current_scene({}, ctx)
+        assert result["available"] is True
+        assert result["location"] == "apotek"
+        assert result["objects"] == ["obat", "rak"]
+        assert result["activity"] == "beli obat"
+        assert result["confidence"] == 0.9
+
+    async def test_current_scene_no_location(self) -> None:
+        ctx = _ctx()
+        ctx.last_scene = {"location": None, "objects": [], "activity": None}
+        result = await obs.current_scene({}, ctx)
+        assert result["available"] is False
 
     async def test_visible_people_known(self) -> None:
         ctx = _ctx_with_face(is_known=True, name="Asep")
@@ -83,12 +104,26 @@ class TestObservationTools:
         assert await obs.visible_people({}, _ctx()) == {"available": False, "people": []}
 
     async def test_current_activity_unavailable(self) -> None:
-        # bare-minimum: no scene understander
+        # no last_scene → unavailable
         assert await obs.current_activity({}, _ctx()) == {
             "available": False,
             "activity": None,
             "location": None,
         }
+
+    async def test_current_activity_available(self) -> None:
+        ctx = _ctx()
+        ctx.last_scene = {
+            "location": "dapur",
+            "objects": ["kompor"],
+            "activity": "memasak",
+            "confidence": 0.85,
+        }
+        result = await obs.current_activity({}, ctx)
+        assert result["available"] is True
+        assert result["activity"] == "memasak"
+        assert result["location"] == "dapur"
+        assert result["confidence"] == 0.85
 
     async def test_conversation_summary(self) -> None:
         ctx = _ctx()
@@ -461,8 +496,41 @@ class TestToolContext:
         assert ctx.current_face_embedding() is emb2  # cache holds latest
 
     def test_device_snapshot(self) -> None:
-        # bare-minimum: no device telemetry
+        # no working_memory → empty
         assert _ctx().device_snapshot() == {}
+
+    def test_device_snapshot_from_working_memory(self) -> None:
+        from dto.observations import CurrentContext, DeviceObservation
+
+        ctx = _ctx()
+        wm = MagicMock()
+        ctx.working_memory = wm
+        wm.get.return_value = CurrentContext(
+            observations=[DeviceObservation(battery_level=72, wifi_connected=True, confidence=1.0)]
+        )
+        snap = ctx.device_snapshot()
+        assert snap["battery_level"] == 72
+        assert snap["wifi_connected"] is True
+
+    def test_device_snapshot_no_device_obs(self) -> None:
+        from dto.observations import CurrentContext, FaceObservation
+
+        ctx = _ctx()
+        wm = MagicMock()
+        ctx.working_memory = wm
+        wm.get.return_value = CurrentContext(
+            observations=[
+                FaceObservation(person_id="p1", name="Asep", confidence=0.9, is_known=True)
+            ]
+        )
+        assert ctx.device_snapshot() == {}
+
+    def test_device_snapshot_expired_context(self) -> None:
+        ctx = _ctx()
+        wm = MagicMock()
+        ctx.working_memory = wm
+        wm.get.return_value = None  # expired
+        assert ctx.device_snapshot() == {}
 
 
 class TestRegistry:

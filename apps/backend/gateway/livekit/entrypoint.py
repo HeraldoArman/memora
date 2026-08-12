@@ -86,16 +86,58 @@ async def entrypoint(ctx: JobContext) -> None:
 
     asyncio.get_event_loop().run_in_executor(None, preload_face)
 
-    # --- Wire extraction pipeline ---
+    # --- Scene understander (Step 3) ---
+    from perception.scene.understander import SceneUnderstander
+
+    scene_understander = SceneUnderstander()
+    log.info("scene understander created")
+
+    # --- Observation engine + working memory (Step 5) ---
+    from perception.observation.engine import ObservationEngine
+    from perception.observation.working_memory import WorkingMemory
+
+    working_memory = WorkingMemory()
+    obs_engine = ObservationEngine(working_memory)
+    tool_ctx.working_memory = working_memory
+    log.info("observation engine + working memory created")
+
+    # --- Wire extraction pipeline (with text embeddings for semantic retrieval) ---
+    from memory.retrieval.retriever import Retriever
+    from perception.embeddings.text_embeddings import TextEmbedder
+
+    text_embedder = TextEmbedder()
+
+    from vector.text_index import TextMemoryIndex
+
+    text_index = TextMemoryIndex(dim=768)
+
     async def _on_extract(text: str, sid: str | None) -> None:
         log.info("on_extract triggered: text=%r sid=%s", text[:200], sid)
         from pipeline.runner import PipelineRunner
 
-        await PipelineRunner().run(text, session_id=sid)
+        await PipelineRunner(text_embedder=text_embedder, text_index=text_index).run(
+            text, session_id=sid
+        )
 
     # --- Create display ---
     display = Display(room)
     log.info("display wired to room %s", room.name)
+
+    # --- Create context engine for semantic memory retrieval ---
+    from context.engine import ContextEngine
+
+    retriever = Retriever(text_embedder=text_embedder, text_index=text_index)
+    context_engine = ContextEngine(retriever=retriever)
+    log.info("context engine created (retriever with text embedder + index)")
+
+    # --- Create proactive planner (Step 4) ---
+    from reasoning.planner.planner import ProactivePlanner
+
+    planner = ProactivePlanner(
+        reminder_service=tool_ctx.reminder_service,
+        shopping_service=tool_ctx.shopping_service,
+    )
+    log.info("proactive planner created")
 
     # --- Create agent ---
     log.info(
@@ -105,6 +147,8 @@ async def entrypoint(ctx: JobContext) -> None:
     agent = MemoraAgent(
         tool_ctx=tool_ctx,
         on_extract=_on_extract,
+        context_engine=context_engine,
+        planner=planner,
     )
     log.info("MemoraAgent created")
 
@@ -121,6 +165,19 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
     )
     log.info("AgentSession created (model=%s)", settings.gemini_live_model)
+
+    # --- Wire speech observations via user_input_transcribed ---
+    @session.on("user_input_transcribed")
+    def _on_transcribed(ev):
+        if not ev.is_final or not ev.transcript.strip():
+            return
+        from dto.observations import SpeechObservation
+
+        asyncio.create_task(
+            obs_engine.emit(
+                SpeechObservation(transcript=ev.transcript, is_final=True, confidence=0.95)
+            )
+        )
 
     # --- Wire display + extraction via conversation_item_added ---
     @session.on("conversation_item_added")
@@ -172,7 +229,9 @@ async def entrypoint(ctx: JobContext) -> None:
         )
         if publication.kind == rtc.TrackKind.KIND_VIDEO:
             log.info("spawning video loop for InsightFace (track from %s)", participant.identity)
-            asyncio.create_task(handle_video_track(track, room, tool_ctx))
+            asyncio.create_task(
+                handle_video_track(track, room, tool_ctx, scene_understander, obs_engine)
+            )
         elif publication.kind == rtc.TrackKind.KIND_AUDIO:
             log.info(
                 "audio track subscribed from %s — AgentSession handles audio input automatically",
@@ -209,7 +268,9 @@ async def entrypoint(ctx: JobContext) -> None:
                 pub.set_subscribed(True)
             if pub.subscribed and pub.track and pub.kind == rtc.TrackKind.KIND_VIDEO:
                 log.info("spawning video loop for existing video track from %s", p.identity)
-                asyncio.create_task(handle_video_track(pub.track, room, tool_ctx))
+                asyncio.create_task(
+                    handle_video_track(pub.track, room, tool_ctx, scene_understander, obs_engine)
+                )
 
     # --- Wire data channel for text prompts ---
     @room.on("data_received")
@@ -224,7 +285,9 @@ async def entrypoint(ctx: JobContext) -> None:
             )
             session.generate_reply(instructions=text)
         elif topic == "device":
-            log.debug("device telemetry: %r", data[:200])
+            from gateway.livekit.data_channel import handle_data_received
+
+            asyncio.create_task(handle_data_received(data, topic, obs_engine))
         else:
             log.debug("unknown data topic: %r len=%d", topic, len(data))
 
@@ -243,6 +306,9 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     log.info("agent session started — agent is now listening and seeing video")
 
+    obs_engine.start()
+    log.info("observation engine started")
+
     # --- Wait until the job ends ---
     log.info("entrypoint setup complete, waiting for job to end (room=%s)", room.name)
     try:
@@ -251,6 +317,10 @@ async def entrypoint(ctx: JobContext) -> None:
         log.info("job cancelled for room %s", room.name)
     finally:
         log.info("closing AgentSession for room %s...", room.name)
+        await planner.stop()
+        log.info("proactive planner stopped")
+        await obs_engine.stop()
+        log.info("observation engine stopped")
         await session.aclose()
         log.info("room session torn down for %s", room.name)
 

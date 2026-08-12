@@ -17,7 +17,7 @@ from vector.index import FaceIndex
 from vector.repository import FaceRepository
 
 from gateway.livekit.entrypoint import _init_stores, entrypoint
-from gateway.livekit.track_handler import _update_last_face
+from gateway.livekit.track_handler import _encode_jpeg, _update_last_face
 from tools import ToolContext
 
 
@@ -141,3 +141,72 @@ class TestEntrypoint:
 
         assert callable(entrypoint)
         assert inspect.iscoroutinefunction(entrypoint)
+
+
+class TestEncodeJpeg:
+    def test_encode_valid(self) -> None:
+        img = (np.random.default_rng(0).random((64, 64, 3)) * 255).astype(np.uint8)
+        jpg = _encode_jpeg(img)
+        assert jpg is not None
+        assert len(jpg) > 0
+
+    def test_encode_none_on_failure(self) -> None:
+        # Invalid input should return None, not raise
+        result = _encode_jpeg(None)
+        assert result is None
+
+
+class TestToolContextLastScene:
+    def test_last_scene_defaults_none(self) -> None:
+        ctx = ToolContext()
+        assert ctx.last_scene is None
+
+    def test_last_scene_set(self) -> None:
+        ctx = ToolContext()
+        ctx.last_scene = {"location": "apotek", "objects": [], "activity": None}
+        assert ctx.last_scene["location"] == "apotek"
+
+
+class TestUpdateLastFaceEmitsObservation:
+    """Step 5: _update_last_face emits FaceObservation to obs_engine."""
+
+    async def test_known_face_emits_observation(self) -> None:
+        repo = _face_repo()
+        ctx = ToolContext(face_repo=repo)
+        obs = AsyncMock()
+        v = np.zeros(8, dtype=np.float32)
+        v[0] = 1.0
+        detected = SimpleNamespace(embedding=v)
+        with patch("graph.repository.PersonRepo") as mock_repo_cls:
+            mock_repo_cls.return_value.get_person = AsyncMock(return_value={"name": "Asep"})
+            await _update_last_face(detected, ctx, obs)
+        obs.emit.assert_awaited_once()
+        emitted = obs.emit.await_args.args[0]
+        assert emitted.person_id == "person-1"
+        assert emitted.name == "Asep"
+        assert emitted.is_known is True
+
+    async def test_no_obs_engine_no_crash(self) -> None:
+        repo = _face_repo()
+        ctx = ToolContext(face_repo=repo)
+        v = np.zeros(8, dtype=np.float32)
+        v[0] = 1.0
+        detected = SimpleNamespace(embedding=v)
+        with patch("graph.repository.PersonRepo") as mock_repo_cls:
+            mock_repo_cls.return_value.get_person = AsyncMock(return_value={"name": "Asep"})
+            await _update_last_face(detected, ctx, None)
+        # No crash, last_face still set
+        assert ctx.last_face is not None
+
+    async def test_unknown_face_emits_observation(self) -> None:
+        repo = _face_repo()
+        ctx = ToolContext(face_repo=repo)
+        obs = AsyncMock()
+        unknown = np.zeros(8, dtype=np.float32)
+        unknown[1] = 1.0
+        detected = SimpleNamespace(embedding=unknown)
+        await _update_last_face(detected, ctx, obs)
+        obs.emit.assert_awaited_once()
+        emitted = obs.emit.await_args.args[0]
+        assert emitted.person_id is None
+        assert emitted.is_known is False

@@ -18,6 +18,7 @@ from typing import Any
 from livekit.agents import Agent, RunContext, function_tool
 
 from prompts import SYSTEM_INSTRUCTION
+from reasoning.prompts.system import build_system_instruction
 from tools import ToolContext, build_registry
 
 log = logging.getLogger(__name__)
@@ -38,24 +39,101 @@ class MemoraAgent(Agent):
         *,
         tool_ctx: ToolContext,
         on_extract: Callable[[str, str | None], Awaitable[None]] | None = None,
+        context_engine: Any = None,
+        planner: Any = None,
     ) -> None:
         super().__init__(instructions=SYSTEM_INSTRUCTION)
         self._tool_ctx = tool_ctx
         self._on_extract = on_extract
+        self._context_engine = context_engine
+        self._planner = planner
         log.info(
-            "MemoraAgent constructed: instructions=%d chars, tool_ctx=%s, on_extract=%s",
+            "MemoraAgent constructed: instructions=%d chars, tool_ctx=%s, on_extract=%s, context_engine=%s, planner=%s",
             len(SYSTEM_INSTRUCTION),
             "wired" if tool_ctx else "None",
             "wired" if on_extract else "None",
+            "wired" if context_engine else "None",
+            "wired" if planner else "None",
         )
 
     async def on_enter(self) -> None:
-        """Called when agent becomes active. Greet the user."""
-        log.info("on_enter: agent becoming active, generating greeting...")
+        """Called when agent becomes active. Inject known memories, then greet."""
+        log.info("on_enter: agent becoming active")
+        if self._context_engine is not None:
+            try:
+                text = await self._build_context_text()
+                if text and text != "(belum ada konteks)":
+                    instructions = build_system_instruction(text)
+                    log.info("on_enter: update_instructions with %d chars context", len(text))
+                    await self.update_instructions(instructions)
+                else:
+                    log.info("on_enter: context empty, keeping static instructions")
+            except Exception:  # noqa: BLE001
+                log.warning(
+                    "on_enter: context build failed, keeping static instructions", exc_info=True
+                )
         await self.session.generate_reply(
             instructions="Sapa pengguna dengan singkat dalam Bahasa Indonesia."
         )
         log.info("on_enter: greeting generated")
+
+        if self._planner is not None:
+            self._planner.start(self._get_context, self._on_proactive)
+            log.info("on_enter: proactive planner started")
+
+    async def _build_context_text(self) -> str:
+        """Build context text from ContextEngine using current tool_ctx state."""
+        from dto.observations import CurrentContext
+
+        current = self._current_context()
+        if current is None:
+            visible = []
+            f = self._tool_ctx.last_face
+            if f and f.get("name"):
+                visible.append(f["name"])
+            current = CurrentContext(visible_people=visible)
+        _pkg, text = await self._context_engine.build(current)
+        return text
+
+    def _current_context(self):
+        """Return CurrentContext from working_memory if available, else None."""
+        wm = self._tool_ctx.working_memory
+        if wm is not None:
+            return wm.get()
+        return None
+
+    def _get_context(self):
+        """Build a CurrentContext snapshot from working_memory, fall back to tool_ctx dicts."""
+        from dto.observations import CurrentContext
+
+        wm = self._tool_ctx.working_memory
+        if wm is not None:
+            ctx = wm.get()
+            if ctx is not None:
+                return ctx
+
+        f = self._tool_ctx.last_face
+        s = self._tool_ctx.last_scene
+        if f is None and s is None:
+            return None
+        visible: list[str] = []
+        if f:
+            if f.get("is_known") and f.get("name"):
+                visible.append(f["name"])
+            elif f.get("is_possible") and f.get("name"):
+                visible.append(f"Mungkin {f['name']}")
+            else:
+                visible.append("Orang tidak dikenali")
+        return CurrentContext(
+            visible_people=visible,
+            scene=s.get("location") if s else None,
+            activity=s.get("activity") if s else None,
+        )
+
+    async def _on_proactive(self, text: str) -> None:
+        """Planner callback — inject a proactive prompt via generate_reply."""
+        log.info("on_proactive: %s", text[:200])
+        await self.session.generate_reply(instructions=text)
 
     # --- Tool dispatch ---
 
@@ -84,7 +162,7 @@ class MemoraAgent(Agent):
         return _handler
 
 
-def _build_tools(tool_ctx: ToolContext, on_extract=None) -> list:
+def _build_tools(tool_ctx: ToolContext, on_extract=None, context_engine=None, planner=None) -> list:
     """Auto-generate @function_tool wrappers from ALL_FUNCTION_DECLARATIONS.
 
     Each declared tool gets a raw_schema function_tool that dispatches to the
@@ -96,7 +174,9 @@ def _build_tools(tool_ctx: ToolContext, on_extract=None) -> list:
         "building tools from ALL_FUNCTION_DECLARATIONS: %d declarations",
         len(ALL_FUNCTION_DECLARATIONS),
     )
-    agent = MemoraAgent(tool_ctx=tool_ctx, on_extract=on_extract)
+    agent = MemoraAgent(
+        tool_ctx=tool_ctx, on_extract=on_extract, context_engine=context_engine, planner=planner
+    )
     tools = []
     for decl in ALL_FUNCTION_DECLARATIONS:
         name = decl["name"]

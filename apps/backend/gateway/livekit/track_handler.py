@@ -14,8 +14,21 @@ import logging
 log = logging.getLogger(__name__)
 
 
-async def handle_video_track(track, room, tool_ctx) -> asyncio.Task:
-    """Spawn the video loop: sample frames → face identity.
+def _encode_jpeg(bgr) -> bytes | None:
+    """Encode a BGR numpy array to JPEG bytes."""
+    try:
+        from perception.vision.sampler import _encode_jpeg as _enc
+
+        return _enc(bgr)
+    except Exception:  # noqa: BLE001
+        log.debug("jpeg encode failed")
+        return None
+
+
+async def handle_video_track(
+    track, room, tool_ctx, scene_understander=None, obs_engine=None
+) -> asyncio.Task:
+    """Spawn the video loop: sample frames → face identity + scene understanding.
 
     Returns the background task (caller stores it for cleanup).
     """
@@ -30,7 +43,7 @@ async def handle_video_track(track, room, tool_ctx) -> asyncio.Task:
     recognizer = FaceRecognizer()
 
     async def _video_loop() -> None:
-        log.info("video loop started — sampling frames for InsightFace")
+        log.info("video loop started — sampling frames for InsightFace + scene understanding")
         frame_count = 0
         try:
             async for frame in sampler.frames():
@@ -52,15 +65,43 @@ async def handle_video_track(track, room, tool_ctx) -> asyncio.Task:
                             getattr(faces[0], "det_score", 0),
                             getattr(faces[0], "bbox", None),
                         )
-                        await _update_last_face(faces[0], tool_ctx)
+                        await _update_last_face(faces[0], tool_ctx, obs_engine)
                     else:
-                        # No face in frame — clear last_face so tools don't see stale data
                         if tool_ctx.last_face is not None:
                             log.debug(
                                 "video frame %d: no face detected, clearing stale last_face",
                                 frame_count,
                             )
                             tool_ctx.last_face = None
+
+                    # Step 3: scene understanding every 5 frames (~5s at 1 FPS)
+                    if scene_understander is not None and frame_count % 5 == 0:
+                        jpeg = _encode_jpeg(bgr)
+                        if jpeg:
+                            try:
+                                scene = await scene_understander.understand(jpeg)
+                                if scene:
+                                    tool_ctx.last_scene = scene
+                                    log.info(
+                                        "scene understood: location=%s activity=%s confidence=%.2f",
+                                        scene.get("location"),
+                                        scene.get("activity"),
+                                        scene.get("confidence", 0),
+                                    )
+                                    if obs_engine is not None:
+                                        from dto.observations import SceneObservation
+
+                                        await obs_engine.emit(
+                                            SceneObservation(
+                                                location=scene.get("location"),
+                                                objects=scene.get("objects", []),
+                                                activity=scene.get("activity"),
+                                                confidence=scene.get("confidence", 0.8),
+                                            )
+                                        )
+                            except Exception:  # noqa: BLE001
+                                log.debug("scene understanding failed on frame %d", frame_count)
+
                     del bgr, faces
                     if frame_count % 5 == 0:
                         gc.collect()
@@ -77,8 +118,8 @@ async def handle_video_track(track, room, tool_ctx) -> asyncio.Task:
     return task
 
 
-async def _update_last_face(detected, tool_ctx) -> None:
-    """Look up face embedding → write result directly to tool_ctx.last_face."""
+async def _update_last_face(detected, tool_ctx, obs_engine=None) -> None:
+    """Look up face embedding → write result to tool_ctx.last_face + emit FaceObservation."""
     try:
         face_repo = tool_ctx.face_repo
         if face_repo is None:
@@ -146,6 +187,20 @@ async def _update_last_face(detected, tool_ctx) -> None:
         if not result.is_known:
             tool_ctx.cache_unknown_embedding(detected.embedding)
             log.debug("cached unknown embedding (TTL=%ss)", tool_ctx.UNKNOWN_EMBEDDING_TTL_S)
+
+        if obs_engine is not None:
+            from dto.observations import FaceObservation
+
+            await obs_engine.emit(
+                FaceObservation(
+                    person_id=result.person_id,
+                    name=name,
+                    confidence=float(result.score),
+                    is_known=result.is_known,
+                    is_possible_match=result.is_possible,
+                    embedding=detected.embedding,
+                )
+            )
     except Exception:  # noqa: BLE001
         log.exception("face lookup failed")
 
