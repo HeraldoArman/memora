@@ -1,20 +1,13 @@
-"""Reasoning layer — Gemini Live session + tools + agent + response sinks.
+"""Reasoning layer — Agent + tools + response sinks.
 
-ReasoningAgent owns the per-room brain: ContextEngine builds the context package,
-GeminiLiveSession drives the live connection, ToolRouter dispatches tool calls, Speaker
-+ Display publish audio/text back to the glasses.
+MemoraAgent is a LiveKit Agent subclass with @function_tool methods.
+Display publishes model text to the glasses OLED via data channel.
 """
 
-from reasoning.agent.agent import ReasoningAgent
+from reasoning.agent.agent import MemoraAgent
 from reasoning.response.display import Display
-from reasoning.response.speaker import Speaker
-from reasoning.session.live_session import GeminiLiveSession
-from reasoning.tools.router import dispatch_tool_call
 
 __all__ = [
-    "ReasoningAgent",
-    "GeminiLiveSession",
-    "Speaker",
+    "MemoraAgent",
     "Display",
-    "dispatch_tool_call",
 ]

@@ -111,7 +111,7 @@ def fuse(batch: list[Observation]) -> CurrentContext:
                 seen.add(obs.name)
                 visible.append(obs.name)
             elif obs.is_possible_match and obs.name:
-                # FAISS score 0.60–0.80: probably this person but not confident.
+                # FAISS score 0.35–0.50: probably this person but not confident.
                 # Surface as "Mungkin <name>" so the agent can ask "Is this <name>?"
                 # and on confirmation, register_face adds the embedding under the
                 # existing person_id — improving future matches.
@@ -120,7 +120,7 @@ def fuse(batch: list[Observation]) -> CurrentContext:
                     seen.add(maybe)
                     visible.append(maybe)
             elif not obs.is_known and not unknown_surfaced:
-                # Fully unknown (score < 0.60) OR possible match with no name resolved
+                # Fully unknown (score < 0.35) OR possible match with no name resolved
                 # (graph down). Surface as "Orang tidak dikenali" so the agent can ask
                 # "siapa ini?" and drive the register_person/register_face flow.
                 seen.add("Orang tidak dikenali")
@@ -149,7 +149,8 @@ def fuse(batch: list[Observation]) -> CurrentContext:
         confidence=aggregate_confidence([c for c, _ in weights], weights=[w for _, w in weights])
         if weights
         else 0.0,
-        observations=batch,
+        # ponytail: cap observations to last 10 to prevent unbounded memory growth
+        observations=batch[-10:],
     )
 
 

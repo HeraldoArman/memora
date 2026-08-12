@@ -35,6 +35,15 @@ PERSON_TOOLS = [
         },
     ),
     _decl(
+        ToolName.GET_PERSON,
+        "Ambil profil lengkap seseorang termasuk catatan dan relasi. (Get a person's full profile: notes + relationships.)",
+        {
+            "type": "object",
+            "properties": {"person_id": _str_param("ID orang")},
+            "required": ["person_id"],
+        },
+    ),
+    _decl(
         ToolName.SEARCH_PERSON_BY_FACE,
         "Identifikasi orang dari wajah yang terlihat saat ini. (Identify the visible person by face.)",
         {"type": "object", "properties": {}},

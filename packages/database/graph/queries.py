@@ -104,6 +104,28 @@ RETURN [x IN (nodes + [n]) | {{
 """
 
 
+# Full graph — every node + every relationship. Used by the dashboard's
+# force-directed viz. Returns nodes as {label, name, person_id} and edges
+# as {type, from, to}. LIMIT is a safety cap; the dashboard is for a single
+# patient's graph which should be well under this.
+FULL_GRAPH = """
+MATCH (n)
+OPTIONAL MATCH (n)-[r]->(m)
+WITH collect(DISTINCT {
+  label: labels(n)[0],
+  name: n.name,
+  person_id: n.person_id
+}) AS nodes,
+collect(DISTINCT {
+  type: type(r),
+  from: startNode(r).name,
+  to: endNode(r).name
+}) AS edges
+RETURN nodes, edges
+LIMIT 500
+"""
+
+
 # Preferences: LIKES / DISLIKES edges from a person → Food/Preference nodes.
 SEARCH_PREFERENCES = """
 MATCH (p:Person {person_id: $person_id})-[:LIKES|DISLIKES]->(n)

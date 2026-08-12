@@ -6,6 +6,7 @@ so a misconfigured deploy fails loudly at startup, not mid-request.
 
 from __future__ import annotations
 
+import socket
 from functools import lru_cache
 
 from pydantic import field_validator
@@ -34,7 +35,7 @@ class Settings(BaseSettings):
 
     # === Gemini (required) ===
     gemini_api_key: str
-    gemini_live_model: str = "gemini-2.0-flash-exp"
+    gemini_live_model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
     gemini_text_model: str = "gemini-2.5-flash"
 
     # === Postgres (required) ===
@@ -57,14 +58,17 @@ class Settings(BaseSettings):
     # === FAISS ===
     faiss_index_path: str = "data/face_index.faiss"
     face_embedding_dim: int = 512
-    face_match_threshold: float = 0.80
-    face_possible_match_threshold: float = 0.60
+    face_match_threshold: float = 0.50
+    face_possible_match_threshold: float = 0.35
 
     # === InsightFace ===
     face_model_root: str = "models/insightface"
 
     # === Perception ===
-    frame_sample_fps: float = 1.0
+    # ponytail: 0.5 FPS (every 2s) — InsightFace ONNX runtime leaks ~20MB/frame on CPU.
+    # 1 FPS fills 1.8GB in 80s and gets killed. 0.5 FPS gives ~4 min before OOM.
+    # Fix: use a separate process for face detection, or switch to a lighter model.
+    frame_sample_fps: float = 0.5
     observation_fusion_window_ms: int = 1000
     observation_ttl_ms: int = 5000
     max_context_age_ms: int = 30000
@@ -77,6 +81,15 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     log_level: str = "INFO"
+
+    # === Worker health check ===
+    worker_health_port: int = 8001
+
+    # === Agent identity ===
+    # Derived from hostname so each machine gets a unique agent name — prevents
+    # dispatch cross-routing when multiple developers share a LiveKit Cloud account.
+    # Override with AGENT_NAME env if you want a fixed custom name.
+    agent_name: str = f"memora-agent-{socket.gethostname().split('.')[0]}"
 
     # === Locale ===
     # IANA tz for local-day windows (reminders, schedules). Indonesia is UTC+7.

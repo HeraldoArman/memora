@@ -16,6 +16,8 @@ from schemas import SCENE_SCHEMA
 
 log = logging.getLogger(__name__)
 
+_HTTP_TIMEOUT_S = 15
+
 
 class SceneUnderstander:
     """Analyze a JPEG frame via Gemini Vision → {location, objects, activity}."""
@@ -27,8 +29,13 @@ class SceneUnderstander:
         if self._client is not None:
             return self._client
         from google import genai
+        from google.genai import types
 
-        self._client = genai.Client(api_key=get_settings().gemini_api_key)
+        # timeout: a hung Gemini call should fail fast, not orphan a background task
+        self._client = genai.Client(
+            api_key=get_settings().gemini_api_key,
+            http_options=types.HttpOptions(timeout=_HTTP_TIMEOUT_S * 1000),
+        )
         return self._client
 
     async def understand(self, jpeg: bytes) -> dict | None:
@@ -54,7 +61,9 @@ class SceneUnderstander:
                     response_schema=SCENE_SCHEMA,
                 ),
             )
-            return _parse(resp)
+            result = _parse(resp)
+            del resp
+            return result
         except Exception as e:  # noqa: BLE001
             log.warning("scene understanding failed: %s", e)
             return None

@@ -11,6 +11,7 @@ const schema = z.object({
     .refine((v) => v.startsWith("ws"), "LIVEKIT_URL must start with ws:// or wss://"),
   LIVEKIT_API_KEY: z.string().min(1, "LIVEKIT_API_KEY is required"),
   LIVEKIT_API_SECRET: z.string().min(1, "LIVEKIT_API_SECRET is required"),
+  AGENT_NAME: z.string().min(1, "AGENT_NAME is required"),
   // public — exposed to the browser so the client knows the server address.
   NEXT_PUBLIC_LIVEKIT_URL: z
     .string()
@@ -32,6 +33,7 @@ export function getServerEnv(): Env {
     LIVEKIT_URL: process.env.LIVEKIT_URL,
     LIVEKIT_API_KEY: process.env.LIVEKIT_API_KEY,
     LIVEKIT_API_SECRET: process.env.LIVEKIT_API_SECRET,
+    AGENT_NAME: process.env.AGENT_NAME,
     NEXT_PUBLIC_LIVEKIT_URL: process.env.NEXT_PUBLIC_LIVEKIT_URL,
   });
   if (!parsed.success) {
@@ -46,15 +48,23 @@ export function getServerEnv(): Env {
  * Public env (NEXT_PUBLIC_* only). Safe to read in the browser. Use this in
  * client components instead of reading process.env directly — it validates.
  */
-export function getPublicEnv(): { livekitUrl: string } {
-  const url = process.env.NEXT_PUBLIC_LIVEKIT_URL;
+export function getPublicEnv(): { livekitUrl: string; workerHealthUrl: string } {
+  const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
+  const workerHealthUrl = process.env.NEXT_PUBLIC_WORKER_HEALTH_URL;
   const parsed = z
-    .string()
-    .url()
-    .refine((v) => v.startsWith("ws"))
-    .safeParse(url);
+    .object({
+      livekitUrl: z
+        .string()
+        .url()
+        .refine((v) => v.startsWith("ws")),
+      workerHealthUrl: z
+        .string()
+        .url()
+        .refine((v) => v.startsWith("http")),
+    })
+    .safeParse({ livekitUrl, workerHealthUrl });
   if (!parsed.success) {
-    throw new Error("NEXT_PUBLIC_LIVEKIT_URL missing or invalid in client env");
+    throw new Error("NEXT_PUBLIC_LIVEKIT_URL or NEXT_PUBLIC_WORKER_HEALTH_URL missing/invalid");
   }
-  return { livekitUrl: parsed.data };
+  return parsed.data;
 }
