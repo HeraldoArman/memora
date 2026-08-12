@@ -38,7 +38,6 @@ await session.start(
         ),
     ),
 )
-
 ```
 
 ---
@@ -165,7 +164,11 @@ A common pattern is to prompt the user a few times to check if they're still pre
 ```python
 import asyncio
 from livekit.agents import (
-    Agent, AgentSession, JobContext, UserStateChangedEvent, inference,
+    Agent,
+    AgentSession,
+    JobContext,
+    UserStateChangedEvent,
+    inference,
 )
 
 # ctx is the JobContext from the entrypoint function
@@ -178,6 +181,7 @@ session = AgentSession(
 
 inactivity_task: asyncio.Task | None = None
 
+
 async def check_if_user_present():
     # Prompt the user a few times, then end the session
     for _ in range(3):
@@ -186,6 +190,7 @@ async def check_if_user_present():
         )
         await asyncio.sleep(10)
     session.shutdown()
+
 
 @session.on("user_state_changed")
 def on_user_state_changed(ev: UserStateChangedEvent):
@@ -199,11 +204,11 @@ def on_user_state_changed(ev: UserStateChangedEvent):
         inactivity_task.cancel()
         inactivity_task = None
 
+
 await session.start(
     agent=Agent(instructions="You are a helpful assistant."),
     room=ctx.room,
 )
-
 ```
 
 ---
@@ -324,13 +329,11 @@ In the default case, the linked participant is the first participant to join a r
 **Python**:
 
 ```python
-
 await session.start(
     # ... agent, room, room_options, etc.
 )
 
 participant = session.room_io.linked_participant
-
 ```
 
 ### Room options
@@ -519,7 +522,7 @@ from livekit.agents import room_io
 from livekit.plugins import noise_cancellation
 
 
-room_options=room_io.RoomOptions(
+room_options = room_io.RoomOptions(
     video_input=True,
     audio_input=room_io.AudioInputOptions(
         noise_cancellation=noise_cancellation.BVC(),
@@ -535,7 +538,6 @@ await session.start(
     room=room,
     room_options=room_options,
 )
-
 ```
 
 ---

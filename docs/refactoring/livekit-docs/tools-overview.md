@@ -46,7 +46,6 @@ agent = MyAgent(
     llm=openai.responses.LLM(model="gpt-4.1"),
     tools=[openai.tools.WebSearch()],  # replace with any supported tool
 )
-
 ```
 
 ---

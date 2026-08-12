@@ -40,7 +40,6 @@ logger = logging.getLogger("gemini-live-vision")
 logger.setLevel(logging.INFO)
 
 server = AgentServer()
-
 ```
 
 ---
@@ -63,14 +62,14 @@ logger = logging.getLogger("gemini-live-vision")
 logger.setLevel(logging.INFO)
 
 server = AgentServer()
-
 ```
 
 ```python
 class Assistant(Agent):
     def __init__(self) -> None:
-        super().__init__(instructions="You are a helpful voice AI assistant that can see the world around you.")
-
+        super().__init__(
+            instructions="You are a helpful voice AI assistant that can see the world around you."
+        )
 ```
 
 ---
@@ -97,8 +96,9 @@ server = AgentServer()
 
 class Assistant(Agent):
     def __init__(self) -> None:
-        super().__init__(instructions="You are a helpful voice AI assistant that can see the world around you.")
-
+        super().__init__(
+            instructions="You are a helpful voice AI assistant that can see the world around you."
+        )
 ```
 
 ```python
@@ -110,7 +110,7 @@ async def entrypoint(ctx: JobContext):
         llm=google.beta.realtime.RealtimeModel(
             model="gemini-2.5-flash-native-audio-preview-12-2025",
             proactivity=True,
-            enable_affective_dialog=True
+            enable_affective_dialog=True,
         ),
     )
 
@@ -119,12 +119,11 @@ async def entrypoint(ctx: JobContext):
         agent=Assistant(),
         room_options=room_io.RoomOptions(
             video_input=True,
-        )
+        ),
     )
     await ctx.connect()
 
     await session.generate_reply()
-
 ```
 
 ---
@@ -151,7 +150,9 @@ server = AgentServer()
 
 class Assistant(Agent):
     def __init__(self) -> None:
-        super().__init__(instructions="You are a helpful voice AI assistant that can see the world around you.")
+        super().__init__(
+            instructions="You are a helpful voice AI assistant that can see the world around you."
+        )
 
 
 @server.rtc_session(agent_name="my-agent")
@@ -162,7 +163,7 @@ async def entrypoint(ctx: JobContext):
         llm=google.beta.realtime.RealtimeModel(
             model="gemini-2.5-flash-native-audio-preview-12-2025",
             proactivity=True,
-            enable_affective_dialog=True
+            enable_affective_dialog=True,
         ),
     )
 
@@ -171,18 +172,16 @@ async def entrypoint(ctx: JobContext):
         agent=Assistant(),
         room_options=room_io.RoomOptions(
             video_input=True,
-        )
+        ),
     )
     await ctx.connect()
 
     await session.generate_reply()
-
 ```
 
 ```python
 if __name__ == "__main__":
     cli.run_app(server)
-
 ```
 
 ---
@@ -216,7 +215,9 @@ logger.setLevel(logging.INFO)
 
 class Assistant(Agent):
     def __init__(self) -> None:
-        super().__init__(instructions="You are a helpful voice AI assistant that can see the world around you.")
+        super().__init__(
+            instructions="You are a helpful voice AI assistant that can see the world around you."
+        )
 
 
 server = AgentServer()
@@ -230,7 +231,7 @@ async def entrypoint(ctx: JobContext):
         llm=google.beta.realtime.RealtimeModel(
             model="gemini-2.5-flash-native-audio-preview-12-2025",
             proactivity=True,
-            enable_affective_dialog=True
+            enable_affective_dialog=True,
         ),
     )
 
@@ -239,7 +240,7 @@ async def entrypoint(ctx: JobContext):
         agent=Assistant(),
         room_options=room_io.RoomOptions(
             video_input=True,
-        )
+        ),
     )
     await ctx.connect()
 
@@ -248,7 +249,6 @@ async def entrypoint(ctx: JobContext):
 
 if __name__ == "__main__":
     cli.run_app(server)
-
 ```
 
 ---

@@ -32,13 +32,21 @@ class Assistant(Agent):
         # Find the first video track (if any) from the remote participant
         if room.remote_participants:
             remote_participant = list(room.remote_participants.values())[0]
-            video_tracks = [publication.track for publication in list(remote_participant.track_publications.values()) if publication.track and publication.track.kind == rtc.TrackKind.KIND_VIDEO]
+            video_tracks = [
+                publication.track
+                for publication in list(remote_participant.track_publications.values())
+                if publication.track and publication.track.kind == rtc.TrackKind.KIND_VIDEO
+            ]
             if video_tracks:
                 self._create_video_stream(video_tracks[0])
 
         # Watch for new video tracks not yet published
         @room.on("track_subscribed")
-        def on_track_subscribed(track: rtc.Track, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant):
+        def on_track_subscribed(
+            track: rtc.Track,
+            publication: rtc.RemoteTrackPublication,
+            participant: rtc.RemoteParticipant,
+        ):
             if track.kind == rtc.TrackKind.KIND_VIDEO:
                 self._create_video_stream(track)
 
@@ -58,6 +66,7 @@ class Assistant(Agent):
 
         # Create a new stream to receive frames
         self._video_stream = rtc.VideoStream(track)
+
         async def read_stream():
             async for event in self._video_stream:
                 # Store the latest frame for use later
@@ -67,7 +76,6 @@ class Assistant(Agent):
         task = asyncio.create_task(read_stream())
         task.add_done_callback(lambda t: self._tasks.remove(t))
         self._tasks.append(task)
-
 ```
 
 ** Filename: `Required imports`**
@@ -77,7 +85,6 @@ import asyncio
 from livekit import rtc
 from livekit.agents import Agent, get_job_context, ChatContext, ChatMessage
 from livekit.agents.llm import ImageContent
-
 ```
 
 ** Filename: `agent.ts`**
@@ -174,17 +181,12 @@ image_bytes = encode(
     event.frame,
     EncodeOptions(
         format="PNG",
-        resize_options=ResizeOptions(
-            width=512,
-            height=512,
-            strategy="scale_aspect_fit"
-        )
-    )
+        resize_options=ResizeOptions(width=512, height=512, strategy="scale_aspect_fit"),
+    ),
 )
 image_content = ImageContent(
     image=f"data:image/png;base64,{base64.b64encode(image_bytes).decode('utf-8')}"
 )
-
 ```
 
 ** Filename: `Required imports`**
@@ -192,7 +194,6 @@ image_content = ImageContent(
 ```python
 import base64
 from livekit.agents.utils.images import encode, EncodeOptions, ResizeOptions
-
 ```
 
 ## Live video input
@@ -252,27 +253,27 @@ The following example uses [Anam](https://docs.livekit.io/agents/models/avatar/p
 ```python
 server = AgentServer()
 
+
 @server.rtc_session(agent_name="my-agent")
 async def my_agent(ctx: agents.JobContext):
-   session = AgentSession(
-      # ... stt, llm, tts, etc.
-   )
+    session = AgentSession(
+        # ... stt, llm, tts, etc.
+    )
 
-   avatar = anam.AvatarSession(
-      persona_config=anam.PersonaConfig(
-         name="...",  # Name of the avatar to use.
-         avatarId="...",  # ID of the avatar to use.
-      ),
-   )
+    avatar = anam.AvatarSession(
+        persona_config=anam.PersonaConfig(
+            name="...",  # Name of the avatar to use.
+            avatarId="...",  # ID of the avatar to use.
+        ),
+    )
 
-   # Start the avatar and wait for it to join
-   await avatar.start(session, room=ctx.room)
+    # Start the avatar and wait for it to join
+    await avatar.start(session, room=ctx.room)
 
-   # Start your agent session with the user
-   await session.start(
-      # ... room, agent, room_options, etc....
-   )
-
+    # Start your agent session with the user
+    await session.start(
+        # ... room, agent, room_options, etc....
+    )
 ```
 
 ** Filename: `Required imports`**
@@ -281,7 +282,6 @@ async def my_agent(ctx: agents.JobContext):
 from livekit import agents
 from livekit.agents import AgentServer, AgentSession
 from livekit.plugins import anam
-
 ```
 
 ** Filename: `agent.ts`**

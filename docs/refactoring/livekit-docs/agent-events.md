@@ -28,13 +28,15 @@ A `UserInputTranscribedEvent` is emitted when user transcription is available.
 ```python
 from livekit.agents import UserInputTranscribedEvent
 
+
 @session.on("user_input_transcribed")
 def on_user_input_transcribed(event: UserInputTranscribedEvent):
-    print(f"User input transcribed: {event.transcript}, "
-          f"language: {event.language}, "
-          f"final: {event.is_final}, "
-          f"speaker id: {event.speaker_id}")
-
+    print(
+        f"User input transcribed: {event.transcript}, "
+        f"language: {event.language}, "
+        f"final: {event.is_final}, "
+        f"speaker id: {event.speaker_id}"
+    )
 ```
 
 ---
@@ -69,11 +71,14 @@ from livekit.agents.llm import ChatMessage, ImageContent, AudioContent
 
 ...
 
+
 @session.on("conversation_item_added")
 def on_conversation_item_added(event: ConversationItemAddedEvent):
     if not isinstance(event.item, ChatMessage):
         return
-    print(f"Conversation item added from {event.item.role}: {event.item.text_content}. interrupted: {event.item.interrupted}")
+    print(
+        f"Conversation item added from {event.item.role}: {event.item.text_content}. interrupted: {event.item.interrupted}"
+    )
     # to iterate over all types of content:
     for content in event.item.content:
         if isinstance(content, str):
@@ -84,7 +89,6 @@ def on_conversation_item_added(event: ConversationItemAddedEvent):
         elif isinstance(content, AudioContent):
             # frame is a list[rtc.AudioFrame]
             print(f" - audio: {content.frame}, transcript: {content.transcript}")
-
 ```
 
 ---
@@ -155,11 +159,11 @@ A `SessionUsageUpdatedEvent` is emitted whenever new per-model usage data is ava
 ```python
 from livekit.agents import SessionUsageUpdatedEvent
 
+
 @session.on("session_usage_updated")
 def on_session_usage_updated(ev: SessionUsageUpdatedEvent):
     for usage in ev.usage.model_usage:
         print(f"{usage.provider}/{usage.model}: {usage}")
-
 ```
 
 ---
@@ -321,6 +325,7 @@ Listen for the `error` event and check the `recoverable` field to decide how to 
 ```python
 from livekit.agents import ErrorEvent
 
+
 @session.on("error")
 def on_error(ev: ErrorEvent):
     if ev.error.recoverable:
@@ -332,7 +337,6 @@ def on_error(ev: ErrorEvent):
         "I'm having trouble connecting right now. Please try again shortly.",
         allow_interruptions=False,
     )
-
 ```
 
 ---
@@ -367,6 +371,7 @@ from livekit.agents import ErrorEvent
 
 custom_audio = "path/to/error_message.ogg"
 
+
 @session.on("error")
 def on_error(ev: ErrorEvent):
     if ev.error.recoverable:
@@ -378,7 +383,6 @@ def on_error(ev: ErrorEvent):
         audio=audio_frames_from_file(custom_audio),
         allow_interruptions=False,
     )
-
 ```
 
 ---
@@ -415,6 +419,7 @@ By default, an unrecoverable error closes the session. To keep the session alive
 ```python
 from livekit.agents import ErrorEvent, llm, multimodal, stt, tts
 
+
 @session.on("error")
 def on_error(ev: ErrorEvent):
     if ev.error.recoverable:
@@ -430,7 +435,6 @@ def on_error(ev: ErrorEvent):
         session.update_agent(session.current_agent)
         ev.error.recoverable = True
         return
-
 ```
 
 ---

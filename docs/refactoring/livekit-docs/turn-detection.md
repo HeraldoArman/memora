@@ -62,7 +62,6 @@ session = AgentSession(
     ),
     # ... stt, tts, llm, etc.
 )
-
 ```
 
 ---
@@ -115,14 +114,13 @@ session = AgentSession(
     llm=realtime.RealtimeModel(
         turn_detection=TurnDetection(
             type="server_vad",
-            threshold=0.7,            # less sensitive (better for noisy phone audio)
+            threshold=0.7,  # less sensitive (better for noisy phone audio)
             prefix_padding_ms=300,
             silence_duration_ms=400,  # tighter silence window for snappier turn closing
         ),
     ),
     # ... tts, etc.
 )
-
 ```
 
 ---
@@ -161,7 +159,6 @@ session = AgentSession(
     ),
     # ... stt, tts, llm, etc.
 )
-
 ```
 
 ---
@@ -197,7 +194,6 @@ session = AgentSession(
     stt=assemblyai.STT(),  # AssemblyAI is the recommended STT plugin for STT-based endpointing
     # ... tts, llm, etc.
 )
-
 ```
 
 ---
@@ -248,6 +244,7 @@ session = AgentSession(
 # Disable audio input at the start
 session.input.set_audio_enabled(False)
 
+
 # When user starts speaking
 @ctx.room.local_participant.register_rpc_method("start_turn")
 async def start_turn(data: rtc.RpcInvocationData):
@@ -255,18 +252,19 @@ async def start_turn(data: rtc.RpcInvocationData):
     session.clear_user_turn()  # Clear any previous input
     session.input.set_audio_enabled(True)  # Start listening
 
+
 # When user finishes speaking
 @ctx.room.local_participant.register_rpc_method("end_turn")
 async def end_turn(data: rtc.RpcInvocationData):
     session.input.set_audio_enabled(False)  # Stop listening
     session.commit_user_turn()  # Process the input and generate response
 
+
 # When user cancels their turn
 @ctx.room.local_participant.register_rpc_method("cancel_turn")
 async def cancel_turn(data: rtc.RpcInvocationData):
     session.input.set_audio_enabled(False)  # Stop listening
     session.clear_user_turn()  # Discard the input
-
 ```
 
 ---
@@ -336,7 +334,6 @@ async def end_turn(data: rtc.RpcInvocationData):
         stt_flush_duration=2.0,
     )
     logger.info(f"user said: {transcript}")
-
 ```
 
 Both `transcript_timeout` and `stt_flush_duration` default to `2.0` seconds.
@@ -352,7 +349,6 @@ In Python, pass `skip_reply=True` to `commit_user_turn()` to commit and transcri
 
 ```python
 transcript = await session.commit_user_turn(skip_reply=True)
-
 ```
 
 #### Listen to a specific participant
@@ -372,7 +368,6 @@ async def start_turn(data: rtc.RpcInvocationData):
     # Listen to the participant who started the turn.
     session.room_io.set_participant(data.caller_identity)
     session.input.set_audio_enabled(True)
-
 ```
 
 #### Ignore empty turns
@@ -384,13 +379,11 @@ If a user commits a turn without speaking, you can stop the agent from replying 
 ```python
 from livekit.agents.llm import ChatContext, ChatMessage, StopResponse
 
+
 class MyAgent(Agent):
-    async def on_user_turn_completed(
-        self, turn_ctx: ChatContext, new_message: ChatMessage
-    ) -> None:
+    async def on_user_turn_completed(self, turn_ctx: ChatContext, new_message: ChatMessage) -> None:
         if not new_message.text_content:
             raise StopResponse()
-
 ```
 
 ---
@@ -431,7 +424,6 @@ handle.interrupt()
 
 # or from the session
 session.interrupt()
-
 ```
 
 ---
@@ -487,7 +479,6 @@ turn_handling = {
         # ... other interruption parameters
     },
 }
-
 ```
 
 ---
@@ -539,7 +530,6 @@ session = AgentSession(
     },
     # ... other parameters
 )
-
 ```
 
 ---
@@ -569,10 +559,10 @@ When a threshold is crossed, the framework calls the agent's [`on_user_turn_exce
 ```python
 from livekit.agents import Agent, UserTurnExceededEvent
 
+
 class MyAgent(Agent):
     async def on_user_turn_exceeded(self, ev: UserTurnExceededEvent) -> None:
         await self.session.say("Sorry to jump in. Can I help with anything specific?")
-
 ```
 
 ---
@@ -613,10 +603,10 @@ def on_interruption(ev):
     print(f"User interrupted at: {ev.timestamp}")
     print(f"Interruption probability: {ev.probability}")
 
+
 @session.on("agent_false_interruption")
 def on_false_interruption(ev):
     print("False interruption detected, resuming speech")
-
 ```
 
 ---
@@ -643,6 +633,7 @@ The `AgentSession` exposes user and agent state events to monitor the flow of a 
 ```python
 from livekit.agents import UserStateChangedEvent, AgentStateChangedEvent
 
+
 @session.on("user_state_changed")
 def on_user_state_changed(ev: UserStateChangedEvent):
     if ev.new_state == "speaking":
@@ -651,6 +642,7 @@ def on_user_state_changed(ev: UserStateChangedEvent):
         print("User stopped speaking")
     elif ev.new_state == "away":
         print("User is not present (e.g. disconnected)")
+
 
 @session.on("agent_state_changed")
 def on_agent_state_changed(ev: AgentStateChangedEvent):
@@ -664,7 +656,6 @@ def on_agent_state_changed(ev: AgentStateChangedEvent):
         print("Agent is processing user input and generating a response")
     elif ev.new_state == "speaking":
         print("Agent started speaking")
-
 ```
 
 ---

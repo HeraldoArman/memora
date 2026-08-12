@@ -60,7 +60,6 @@ session = AgentSession(
         instructions="You are a helpful assistant",
     ),
 )
-
 ```
 
 ---
@@ -142,7 +141,6 @@ session = AgentSession(
         instructions="You are a helpful assistant",
     ),
 )
-
 ```
 
 ---
@@ -182,18 +180,17 @@ from google.genai import types
 from livekit.agents import AgentSession, TurnHandlingOptions, inference
 
 session = AgentSession(
-   turn_handling=TurnHandlingOptions(
-      turn_detection=inference.TurnDetector(),
-   ),
-   llm=google.realtime.RealtimeModel(
-      realtime_input_config=types.RealtimeInputConfig(
-         automatic_activity_detection=types.AutomaticActivityDetection(
-            disabled=True,
-         ),
-      ),
-   ),
+    turn_handling=TurnHandlingOptions(
+        turn_detection=inference.TurnDetector(),
+    ),
+    llm=google.realtime.RealtimeModel(
+        realtime_input_config=types.RealtimeInputConfig(
+            automatic_activity_detection=types.AutomaticActivityDetection(
+                disabled=True,
+            ),
+        ),
+    ),
 )
-
 ```
 
 ---
@@ -239,7 +236,6 @@ session = AgentSession(
         ),
     ),
 )
-
 ```
 
 ---
@@ -286,7 +282,9 @@ class VideoAssistant(Agent):
             ),
         )
 
+
 server = AgentServer()
+
 
 @server.rtc_session(agent_name="my-agent")
 async def my_agent(ctx: JobContext):
@@ -299,7 +297,6 @@ async def my_agent(ctx: JobContext):
             video_input=True,
         ),
     )
-
 ```
 
 ** Filename: `Required imports`**
@@ -313,7 +310,6 @@ from livekit.agents import (
     room_io,
 )
 from livekit.plugins import google
-
 ```
 
 By default, the agent samples one frame per second while the user speaks and one frame every three seconds otherwise. To control the frame rate, pass a [`video_sampler`](https://docs.livekit.io/agents/logic/sessions.md#video_sampler) to the `AgentSession`.
@@ -337,7 +333,6 @@ session = AgentSession(
     llm=google.realtime.RealtimeModel(modalities=[Modality.TEXT]),
     tts="inworld/inworld-tts-2",
 )
-
 ```
 
 ---

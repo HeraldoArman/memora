@@ -102,7 +102,6 @@
       <devsite-cookie-notification-bar></devsite-cookie-notification-bar>
         <devsite-header role="banner" keep-tabs-visible>
 
-
 <div class="devsite-header--inner" data-nosnippet>
   <div class="devsite-top-logo-row-wrapper-wrapper">
     <div class="devsite-top-logo-row-wrapper">
@@ -151,7 +150,6 @@
           <div class="devsite-header-upper-tabs">
 
            </div>
-
 
 <devsite-search
 enable-signin
@@ -233,8 +231,6 @@ enable-query-completion
 
 
           <devsite-appearance-selector></devsite-appearance-selector>
-
-
 
 <devsite-language-selector>
   <ul role="presentation">
@@ -417,10 +413,6 @@ Community
 
         <div class="devsite-doc-set-nav-row">
 
-
-
-
-
   <devsite-tabs class="lower-tabs">
 
     <nav class="devsite-tabs-wrapper" aria-label="Lower tabs">
@@ -566,7 +558,6 @@ Community
 
             <li class="devsite-nav-item">
 
-
 <a href="/gemini-api/docs"
 
        class="devsite-nav-title gc-analytics-event
@@ -602,7 +593,6 @@ Community
 
 
                     <li class="devsite-nav-item">
-
 
 <a href="/gemini-api/docs"
 
@@ -640,7 +630,6 @@ Community
 
                     <li class="devsite-nav-item">
 
-
 <a href="/api"
 
        class="devsite-nav-title gc-analytics-event
@@ -675,9 +664,6 @@ Community
                 </ul>
 
             </li>
-
-
-
 
 <li class="devsite-nav-item">
 
@@ -1360,8 +1346,6 @@ Community
             </div>
           </div>
           <devsite-content>
-
-
 
 <article class="devsite-article"><style>
       /* Styles inlined from /site-assets/css/style.css */
@@ -2701,7 +2685,6 @@ gap: 2rem;
 
           Home
 
-
   </a>
 
   </li>
@@ -2710,11 +2693,6 @@ gap: 2rem;
              ">
 
       <div class="devsite-breadcrumb-guillemet material-icons" aria-hidden="true"></div>
-
-
-
-
-
 
 <a href="https://ai.google.dev/gemini-api"
 
@@ -2738,7 +2716,6 @@ gap: 2rem;
 
           Gemini API
 
-
   </a>
 
   </li>
@@ -2747,11 +2724,6 @@ gap: 2rem;
              ">
 
       <div class="devsite-breadcrumb-guillemet material-icons" aria-hidden="true"></div>
-
-
-
-
-
 
 <a href="https://ai.google.dev/gemini-api/docs"
 
@@ -2774,7 +2746,6 @@ gap: 2rem;
     >
 
           Docs
-
 
   </a>
 
@@ -2967,9 +2938,6 @@ API keys.</span></aside>
     <div class="devsite-card-content-wrapper">
       <div class="devsite-card-content">
 
-
-
-
 <span
 
     class="devsite-label"
@@ -3017,9 +2985,6 @@ GenAI SDK tutorial
     <div class="devsite-card-content-wrapper">
       <div class="devsite-card-content">
 
-
-
-
 <span
 
     class="devsite-label"
@@ -3066,9 +3031,6 @@ WebSocket tutorial
 
     <div class="devsite-card-content-wrapper">
       <div class="devsite-card-content">
-
-
-
 
 <span
 
@@ -3271,8 +3233,6 @@ data-nosnippet
         </devsite-footer-promos>
         <devsite-footer-linkboxes class="devsite-footer">
 
-
-
 <nav class="devsite-footer-linkboxes nocontent"
      aria-label="Footer links"
      data-nosnippet>
@@ -3281,8 +3241,6 @@ data-nosnippet
 
         </devsite-footer-linkboxes>
         <devsite-footer-utility class="devsite-footer">
-
-
 
 <div class="devsite-footer-utility nocontent" data-nosnippet>
 
@@ -3335,7 +3293,6 @@ data-nosnippet
       </li>
 
     </ul>
-
 
 <devsite-language-selector>
   <ul role="presentation">
@@ -3476,9 +3433,6 @@ data-nosnippet
     </devsite-analytics>
 
       <devsite-badger></devsite-badger>
-
-
-
 
 <script nonce="GtyulNSoPQJ9EP9Ocn6edCF4PR36Yu">
   

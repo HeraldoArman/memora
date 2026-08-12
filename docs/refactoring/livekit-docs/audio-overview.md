@@ -122,7 +122,6 @@ room_options = room_io.RoomOptions(
         auto_gain_control=False,
     ),
 )
-
 ```
 
 ## Preemptive speech generation
@@ -141,14 +140,13 @@ Configure preemptive generation using the `preemptive_generation` key in `turn_h
 session = AgentSession(
     turn_handling={
         "preemptive_generation": {
-            "preemptive_tts": True,       # also run TTS before turn confirmation
+            "preemptive_tts": True,  # also run TTS before turn confirmation
             "max_speech_duration": 10.0,  # skip if user speaks longer than 10s
-            "max_retries": 3,             # max preemptive attempts per turn
+            "max_retries": 3,  # max preemptive attempts per turn
         },
     },
     # ... STT, LLM, TTS, etc.
 )
-
 ```
 
 ---
@@ -179,7 +177,6 @@ session = AgentSession(
     },
     # ... STT, LLM, TTS, etc.
 )
-
 ```
 
 ---
@@ -215,10 +212,9 @@ You can also optionally provide pre-synthesized audio for playback. This skips t
 
 ```python
 await session.say(
-   "Hello. How can I help you today?",
-   allow_interruptions=False,
+    "Hello. How can I help you today?",
+    allow_interruptions=False,
 )
-
 ```
 
 ---
@@ -267,9 +263,8 @@ There are two ways to use `generate_reply`:
 
 ```python
 session.generate_reply(
-   instructions="greet the user and ask where they are from",
+    instructions="greet the user and ask where they are from",
 )
-
 ```
 
 ---
@@ -288,9 +283,8 @@ session.generateReply({
 
 ```python
 session.generate_reply(
-   user_input="how is the weather today?",
+    user_input="how is the weather today?",
 )
-
 ```
 
 ---
@@ -336,7 +330,6 @@ ctx = session.current_agent.chat_ctx.copy()
 # Modify context as needed: replace instructions, trim history, inject context, etc.
 # Then pass the modified context to generate_reply without instructions
 await session.generate_reply(chat_ctx=ctx)
-
 ```
 
 ---
@@ -407,7 +400,6 @@ The `say()` and `generate_reply()` methods return a `SpeechHandle` object, which
 # handle = session.say("Goodbye for now.", allow_interruptions=False)
 # await handle.wait_for_playout()
 await session.say("Goodbye for now.", allow_interruptions=False)
-
 ```
 
 ---
@@ -426,13 +418,14 @@ You can wait for the agent to finish speaking before continuing:
 **Python**:
 
 ```python
-handle = session.generate_reply(instructions="Tell the user we're about to run some slow operations.")
+handle = session.generate_reply(
+    instructions="Tell the user we're about to run some slow operations."
+)
 
 # perform an operation that takes time
 ...
 
-await handle # finally wait for the speech
-
+await handle  # finally wait for the speech
 ```
 
 ---
@@ -457,12 +450,13 @@ The following example makes a web request for the user, and cancels the request 
 
 ```python
 async with aiohttp.ClientSession() as client_session:
-    web_request = client_session.get('https://api.example.com/data')
-    handle = await session.generate_reply(instructions="Tell the user we're processing their request.")
+    web_request = client_session.get("https://api.example.com/data")
+    handle = await session.generate_reply(
+        instructions="Tell the user we're processing their request."
+    )
     if handle.interrupted:
         # if the user interrupts, cancel the web_request too
         web_request.cancel()
-
 ```
 
 ---
@@ -496,7 +490,6 @@ if (handle.interrupted) {
 ```python
 handle = session.say("Hello world")
 handle.add_done_callback(lambda _: print("speech done"))
-
 ```
 
 ---
@@ -520,13 +513,11 @@ Use the active speech handle to coordinate with the speaking state. For instance
 # to hang up the call as part of a function call
 @function_tool
 async def end_call(self, ctx: RunContext):
-   """Use this tool when the user has signaled they wish to end the current call. The session ends automatically after invoking this tool."""
-   await ctx.wait_for_playout() # let the agent finish speaking
+    """Use this tool when the user has signaled they wish to end the current call. The session ends automatically after invoking this tool."""
+    await ctx.wait_for_playout()  # let the agent finish speaking
 
-
-   # call API to delete_room
-   ...
-
+    # call API to delete_room
+    ...
 ```
 
 ---

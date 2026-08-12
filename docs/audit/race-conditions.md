@@ -48,9 +48,7 @@ We already do this in the fallback path. The `working_memory.get()` path returns
 @session.on("user_input_transcribed")
 def _on_transcribed(ev):
     ...
-    asyncio.create_task(
-        obs_engine.emit(SpeechObservation(...))
-    )
+    asyncio.create_task(obs_engine.emit(SpeechObservation(...)))
 ```
 
 The `emit()` call is fire-and-forget. If the task raises an exception (e.g., queue full — though `asyncio.Queue` is unbounded by default), the exception is swallowed by the event loop's exception handler and logged as "Task exception was never retrieved." No data loss, but the observation is lost.

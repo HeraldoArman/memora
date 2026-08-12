@@ -43,12 +43,9 @@ await session.start(
     agent=MyAgent(),
     room=ctx.room,
     room_options=room_io.RoomOptions(
-        text_output=room_io.TextOutputOptions(
-            sync_transcription=False
-        ),
+        text_output=room_io.TextOutputOptions(sync_transcription=False),
     ),
 )
-
 ```
 
 ---
@@ -88,7 +85,6 @@ session = AgentSession(
     # ... stt, llm, tts, vad, etc...
     use_tts_aligned_transcript=True,
 )
-
 ```
 
 ---
@@ -122,7 +118,6 @@ async def transcription_node(
         if isinstance(chunk, TimedString):
             logger.info(f"TimedString: '{chunk}' ({chunk.start_time} - {chunk.end_time})")
         yield chunk
-
 ```
 
 ---
@@ -178,7 +173,6 @@ await session.start(
         ),
     ),
 )
-
 ```
 
 ---
@@ -240,14 +234,15 @@ session = AgentSession(
     tts_text_transforms=[
         "filter_emoji",
         "filter_markdown",
-        text_transforms.replace({
-            "LiveKit": "<<ˈ|l|aɪ|v>> <<ˈ|k|ɪ|t>>",
-            "API": "A P I",
-            "RTMP": "R T M P",
-        }),
+        text_transforms.replace(
+            {
+                "LiveKit": "<<ˈ|l|aɪ|v>> <<ˈ|k|ɪ|t>>",
+                "API": "A P I",
+                "RTMP": "R T M P",
+            }
+        ),
     ],
 )
-
 ```
 
 ---
@@ -291,6 +286,7 @@ from livekit.agents import AgentSession, text_transforms
 async def redact_emails(text: AsyncIterable[str]) -> AsyncIterable[str]:
     """Replace email addresses with 'email redacted'."""
     import re
+
     buffer = ""
     async for chunk in text:
         buffer += chunk
@@ -315,7 +311,6 @@ session = AgentSession(
         text_transforms.replace({"ACME": "Acme Corp"}),
     ],
 )
-
 ```
 
 ---
@@ -441,6 +436,7 @@ def custom_text_input_handler(session: AgentSession, event: room_io.TextInputEve
 
 server = AgentServer()
 
+
 @server.rtc_session(agent_name="my-agent")
 async def my_agent(ctx: JobContext):
     # Create the session
@@ -452,12 +448,9 @@ async def my_agent(ctx: JobContext):
     session.start(
         # other options...
         room_options=room_io.RoomOptions(
-            text_input=room_io.TextInputOptions(
-                text_input_cb=custom_text_input_handler
-            )
+            text_input=room_io.TextInputOptions(text_input_cb=custom_text_input_handler)
         )
     )
-
 ```
 
 ---
@@ -520,11 +513,10 @@ In Python, you can turn off audio input and output in `RoomOptions` when you sta
 session.start(
     # ... agent, room
     room_options=RoomOptions(
-      audio_input=False,
-      audio_output=False,
+        audio_input=False,
+        audio_output=False,
     ),
 )
-
 ```
 
 ---
@@ -559,12 +551,12 @@ session.input.set_audio_enabled(False)
 session.output.set_audio_enabled(False)
 await session.start(...)
 
+
 # user toggles audio switch
 @room.local_participant.register_rpc_method("toggle_audio")
 async def on_toggle_audio(data: rtc.RpcInvocationData) -> None:
     session.input.set_audio_enabled(not session.input.audio_enabled)
     session.output.set_audio_enabled(not session.output.audio_enabled)
-
 ```
 
 ---
@@ -605,12 +597,11 @@ You can also temporarily pause audio input to prevent speech from being queued f
 # if currently speaking, stop first so states don't overlap
 session.interrupt()
 
-session.input.set_audio_enabled(False) # stop listening
+session.input.set_audio_enabled(False)  # stop listening
 try:
     await do_job()  # your non-verbal job
 finally:
-    session.input.set_audio_enabled(True) # start listening again
-
+    session.input.set_audio_enabled(True)  # start listening again
 ```
 
 ---

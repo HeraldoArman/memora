@@ -58,12 +58,13 @@ Override the method within a custom `Agent` subclass, or pass hooks to `Agent.cr
 **Python**:
 
 ```python
-async def stt_node(self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings) -> Optional[AsyncIterable[stt.SpeechEvent]]:
+async def stt_node(
+    self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings
+) -> Optional[AsyncIterable[stt.SpeechEvent]]:
     # insert custom before STT processing here
     events = Agent.default.stt_node(self, audio, model_settings)
     # insert custom after STT processing here
     return events
-
 ```
 
 ---
@@ -101,7 +102,6 @@ async def on_enter(self):
     await self.session.generate_reply(
         instructions="Greet the user with a warm welcome",
     )
-
 ```
 
 ---
@@ -131,7 +131,6 @@ async def on_exit(self):
     await self.session.generate_reply(
         instructions="Tell the user a friendly goodbye before you exit.",
     )
-
 ```
 
 ---
@@ -170,15 +169,17 @@ One common use of this node is [retrieval-augmented generation (RAG)](https://do
 ```python
 from livekit.agents import ChatContext, ChatMessage
 
+
 async def on_user_turn_completed(
-    self, turn_ctx: ChatContext, new_message: ChatMessage,
+    self,
+    turn_ctx: ChatContext,
+    new_message: ChatMessage,
 ) -> None:
     rag_content = await my_rag_lookup(new_message.text_content)
     turn_ctx.add_message(
         role="assistant",
-        content=f"Additional information relevant to the user's next message: {rag_content}"
+        content=f"Additional information relevant to the user's next message: {rag_content}",
     )
-
 ```
 
 ---
@@ -206,12 +207,13 @@ Additional messages added in this way are not persisted beyond the current turn.
 
 ```python
 async def on_user_turn_completed(
-    self, turn_ctx: ChatContext, new_message: ChatMessage,
+    self,
+    turn_ctx: ChatContext,
+    new_message: ChatMessage,
 ) -> None:
     rag_content = await my_rag_lookup(new_message.text_content)
     turn_ctx.add_message(role="assistant", content=rag_content)
     await self.update_chat_ctx(turn_ctx)
-
 ```
 
 ---
@@ -240,10 +242,11 @@ You can also edit the `new_message` object to modify the user's message before i
 
 ```python
 async def on_user_turn_completed(
-    self, turn_ctx: ChatContext, new_message: ChatMessage,
+    self,
+    turn_ctx: ChatContext,
+    new_message: ChatMessage,
 ) -> None:
     new_message.content = ["... modified message ..."]
-
 ```
 
 ---
@@ -267,12 +270,13 @@ To abort generation entirely — for example, in a push-to-talk interface — yo
 
 ```python
 async def on_user_turn_completed(
-    self, turn_ctx: ChatContext, new_message: ChatMessage,
+    self,
+    turn_ctx: ChatContext,
+    new_message: ChatMessage,
 ) -> None:
     if not new_message.text_content:
         # for example, raise StopResponse to stop the agent from generating a reply
         raise StopResponse()
-
 ```
 
 ---
@@ -304,6 +308,7 @@ To implement this, override `on_user_turn_completed` to build a trimmed context 
 ```python
 from livekit.agents import Agent, ChatContext, ChatMessage, inference, llm
 
+
 class PreResponseAgent(Agent):
     def __init__(self):
         super().__init__(
@@ -322,7 +327,9 @@ class PreResponseAgent(Agent):
         )
 
     async def on_user_turn_completed(
-        self, turn_ctx: ChatContext, new_message: ChatMessage,
+        self,
+        turn_ctx: ChatContext,
+        new_message: ChatMessage,
     ) -> None:
         # Trim the context: drop instructions and tool-call history, keep only recent items
         fast_ctx = turn_ctx.copy(
@@ -337,7 +344,6 @@ class PreResponseAgent(Agent):
             self._fast_llm.chat(chat_ctx=fast_ctx).to_str_iterable(),
             add_to_chat_ctx=False,
         )
-
 ```
 
 ---
@@ -400,10 +406,10 @@ Override the node to customize the behavior. For example, to deliver a prewritte
 ```python
 from livekit.agents import Agent, UserTurnExceededEvent
 
+
 class MyAgent(Agent):
     async def on_user_turn_exceeded(self, ev: UserTurnExceededEvent) -> None:
         await self.session.say("Sorry to jump in. Can I help with anything specific?")
-
 ```
 
 ---
@@ -448,6 +454,7 @@ from livekit import rtc
 from livekit.agents import ModelSettings, stt, Agent
 from typing import AsyncIterable, Optional
 
+
 async def stt_node(
     self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings
 ) -> Optional[AsyncIterable[stt.SpeechEvent]]:
@@ -459,7 +466,6 @@ async def stt_node(
     async for event in Agent.default.stt_node(self, filtered_audio(), model_settings):
         # insert custom text postprocessing here
         yield event
-
 ```
 
 ---
@@ -510,17 +516,14 @@ To use the default implementation, call `Agent.default.llm_node()`.
 from livekit.agents import ModelSettings, llm, FunctionTool, Agent
 from typing import AsyncIterable
 
+
 async def llm_node(
-    self,
-    chat_ctx: llm.ChatContext,
-    tools: list[FunctionTool],
-    model_settings: ModelSettings
+    self, chat_ctx: llm.ChatContext, tools: list[FunctionTool], model_settings: ModelSettings
 ) -> AsyncIterable[llm.ChatChunk]:
     # Insert custom preprocessing here
     async for chunk in Agent.default.llm_node(self, chat_ctx, tools, model_settings):
         # Insert custom postprocessing here
         yield chunk
-
 ```
 
 ---
@@ -565,6 +568,7 @@ from collections.abc import AsyncIterable
 
 from livekit.agents import Agent, FlushSentinel, ModelSettings, llm
 
+
 async def llm_node(
     self,
     chat_ctx: llm.ChatContext,
@@ -593,7 +597,6 @@ async def llm_node(
         # Simulate additional processing, then speak the rest.
         await asyncio.sleep(3)
         yield "Okay, I found what you were looking for. "
-
 ```
 
 ---
@@ -664,6 +667,7 @@ from livekit import rtc
 from livekit.agents import ModelSettings, Agent
 from typing import AsyncIterable
 
+
 async def tts_node(
     self, text: AsyncIterable[str], model_settings: ModelSettings
 ) -> AsyncIterable[rtc.AudioFrame]:
@@ -671,7 +675,6 @@ async def tts_node(
     async for frame in Agent.default.tts_node(self, text, model_settings):
         # Insert custom audio processing here
         yield frame
-
 ```
 
 ---
@@ -728,9 +731,7 @@ class MyAgent(Agent):
         self.speed_factor = speed_factor
 
     async def tts_node(self, text: AsyncIterable[str], model_settings: ModelSettings):
-        return self._process_audio_stream(
-            Agent.default.tts_node(self, text, model_settings)
-        )
+        return self._process_audio_stream(Agent.default.tts_node(self, text, model_settings))
 
     async def realtime_audio_output_node(
         self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings
@@ -770,7 +771,6 @@ class MyAgent(Agent):
             num_channels=frame.num_channels,
             samples_per_channel=stretched.shape[-1],
         )
-
 ```
 
 ---
@@ -868,6 +868,7 @@ To use the default implementation, call `Agent.default.realtime_audio_output_nod
 from livekit.agents import ModelSettings, rtc, Agent
 from typing import AsyncIterable
 
+
 async def realtime_audio_output_node(
     self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings
 ) -> AsyncIterable[rtc.AudioFrame]:
@@ -875,7 +876,6 @@ async def realtime_audio_output_node(
     async for frame in Agent.default.realtime_audio_output_node(self, audio, model_settings):
         # Insert custom audio postprocessing here
         yield frame
-
 ```
 
 ---
@@ -925,10 +925,12 @@ To use the default implementation, call `Agent.default.transcription_node()`.
 from livekit.agents import ModelSettings
 from typing import AsyncIterable
 
-async def transcription_node(self, text: AsyncIterable[str], model_settings: ModelSettings) -> AsyncIterable[str]:
+
+async def transcription_node(
+    self, text: AsyncIterable[str], model_settings: ModelSettings
+) -> AsyncIterable[str]:
     async for delta in text:
         yield delta.replace("😘", "")
-
 ```
 
 ---

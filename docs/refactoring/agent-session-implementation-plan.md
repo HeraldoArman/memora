@@ -297,13 +297,15 @@ class MemoraAgent(Agent):
         if not f:
             return {"people": []}
         return {
-            "people": [{
-                "name": f.get("name"),
-                "person_id": f.get("person_id"),
-                "known": f.get("is_known", False),
-                "possible": f.get("is_possible", False),
-                "score": f.get("score", 0.0),
-            }]
+            "people": [
+                {
+                    "name": f.get("name"),
+                    "person_id": f.get("person_id"),
+                    "known": f.get("is_known", False),
+                    "possible": f.get("is_possible", False),
+                    "score": f.get("score", 0.0),
+                }
+            ]
         }
 
     @function_tool()
@@ -314,6 +316,7 @@ class MemoraAgent(Agent):
             query: The name or partial name to search for.
         """
         from tools.person.tools import search_person as _search_person
+
         return await _search_person({"query": query}, self._tool_ctx)
 
     @function_tool()
@@ -324,12 +327,14 @@ class MemoraAgent(Agent):
             person_id: The person ID to look up.
         """
         from tools.person.tools import get_person as _get_person
+
         return await _get_person({"person_id": person_id}, self._tool_ctx)
 
     @function_tool()
     async def search_person_by_face(self, ctx: RunContext) -> dict:
         """Identify the currently visible person via face recognition."""
         from tools.person.tools import search_person_by_face as _search_by_face
+
         return await _search_by_face({}, self._tool_ctx)
 
     @function_tool()
@@ -340,6 +345,7 @@ class MemoraAgent(Agent):
             name: The person's name.
         """
         from tools.person.tools import register_person as _register_person
+
         return await _register_person({"name": name}, self._tool_ctx)
 
     @function_tool()
@@ -350,6 +356,7 @@ class MemoraAgent(Agent):
             person_id: The person ID to link the face to.
         """
         from tools.person.tools import register_face as _register_face
+
         return await _register_face({"person_id": person_id}, self._tool_ctx)
 
     @function_tool()
@@ -361,6 +368,7 @@ class MemoraAgent(Agent):
             notes: The new notes content.
         """
         from tools.person.tools import update_person as _update_person
+
         return await _update_person({"person_id": person_id, "notes": notes}, self._tool_ctx)
 
     # --- Memory tools ---
@@ -373,18 +381,21 @@ class MemoraAgent(Agent):
             query: The search query.
         """
         from tools.memory.tools import search_memory as _search_memory
+
         return await _search_memory({"query": query}, self._tool_ctx)
 
     @function_tool()
     async def conversation_summary(self, ctx: RunContext) -> dict:
         """Get a summary of recent conversation history."""
         from tools.memory.tools import conversation_summary as _conv_summary
+
         return await _conv_summary({}, self._tool_ctx)
 
     @function_tool()
     async def memory_timeline(self, ctx: RunContext) -> dict:
         """Get a chronological timeline of recent memories."""
         from tools.memory.tools import memory_timeline as _memory_timeline
+
         return await _memory_timeline({}, self._tool_ctx)
 
     # --- Reminder tools ---
@@ -398,12 +409,14 @@ class MemoraAgent(Agent):
             time: When to remind (ISO format or natural language).
         """
         from tools.reminder.tools import create_reminder as _create_reminder
+
         return await _create_reminder({"content": content, "time": time}, self._tool_ctx)
 
     @function_tool()
     async def list_reminders(self, ctx: RunContext) -> dict:
         """List all pending reminders."""
         from tools.reminder.tools import list_reminders as _list_reminders
+
         return await _list_reminders({}, self._tool_ctx)
 
     # --- Knowledge tools ---
@@ -416,12 +429,15 @@ class MemoraAgent(Agent):
             query: The search query.
         """
         from tools.knowledge.tools import search_knowledge as _search_knowledge
+
         return await _search_knowledge({"query": query}, self._tool_ctx)
 
     # --- Calendar tools ---
 
     @function_tool()
-    async def create_event(self, ctx: RunContext, title: str, start_time: str, end_time: str = "") -> dict:
+    async def create_event(
+        self, ctx: RunContext, title: str, start_time: str, end_time: str = ""
+    ) -> dict:
         """Create a calendar event.
 
         Args:
@@ -430,12 +446,16 @@ class MemoraAgent(Agent):
             end_time: End time (ISO format, optional).
         """
         from tools.calendar.tools import create_event as _create_event
-        return await _create_event({"title": title, "start_time": start_time, "end_time": end_time}, self._tool_ctx)
+
+        return await _create_event(
+            {"title": title, "start_time": start_time, "end_time": end_time}, self._tool_ctx
+        )
 
     @function_tool()
     async def list_events(self, ctx: RunContext) -> dict:
         """List upcoming calendar events."""
         from tools.calendar.tools import list_events as _list_events
+
         return await _list_events({}, self._tool_ctx)
 
     # --- Shopping tools ---
@@ -448,12 +468,14 @@ class MemoraAgent(Agent):
             item: The item to add.
         """
         from tools.reminder.tools import add_shopping_item as _add_shopping
+
         return await _add_shopping({"item": item}, self._tool_ctx)
 
     @function_tool()
     async def list_shopping_items(self, ctx: RunContext) -> dict:
         """List all shopping list items."""
         from tools.reminder.tools import list_shopping_items as _list_shopping
+
         return await _list_shopping({}, self._tool_ctx)
 
     # --- System tools ---
@@ -462,6 +484,7 @@ class MemoraAgent(Agent):
     async def firmware_version(self, ctx: RunContext) -> dict:
         """Get the device firmware version."""
         from tools.system.tools import firmware_version as _firmware_version
+
         return await _firmware_version({}, self._tool_ctx)
 
     # --- Observation tools ---
@@ -470,12 +493,14 @@ class MemoraAgent(Agent):
     async def current_scene(self, ctx: RunContext) -> dict:
         """Get the current scene/location analysis."""
         from tools.observation.tools import current_scene as _current_scene
+
         return await _current_scene({}, self._tool_ctx)
 
     @function_tool()
     async def current_activity(self, ctx: RunContext) -> dict:
         """Get the current activity being performed."""
         from tools.observation.tools import current_activity as _current_activity
+
         return await _current_activity({}, self._tool_ctx)
 ```
 
@@ -581,6 +606,7 @@ async def entrypoint(ctx: JobContext) -> None:
     session_id = None
     try:
         from services import MemoryService
+
         session_id = await MemoryService().start_session(summary="livekit room")
         tool_ctx.session_id = session_id
         log.info("conversation session started: %s", session_id)
@@ -592,11 +618,13 @@ async def entrypoint(ctx: JobContext) -> None:
     # Preload InsightFace in background thread
     import asyncio as _aio
     from perception.face.recognizer import preload as preload_face
+
     _aio.get_event_loop().run_in_executor(None, preload_face)
 
     # Wire extraction pipeline
     async def _on_extract(text: str, sid: str | None) -> None:
         from pipeline.runner import PipelineRunner
+
         await PipelineRunner().run(text, session_id=sid)
 
     # --- Create display ---
@@ -634,7 +662,11 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # --- Wire track handlers for InsightFace (video only) ---
     @room.on("track_subscribed")
-    def _on_track(track: rtc.Track, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant):
+    def _on_track(
+        track: rtc.Track,
+        publication: rtc.RemoteTrackPublication,
+        participant: rtc.RemoteParticipant,
+    ):
         if publication.kind == rtc.TrackKind.KIND_VIDEO:
             task = asyncio.create_task(handle_video_track(track, room, tool_ctx))
             log.info("video track subscribed from %s", participant.identity)
@@ -801,6 +833,7 @@ async def _update_last_face(detected, tool_ctx) -> None:
         if result.person_id and (result.is_known or result.is_possible):
             try:
                 from graph import repository as graph_repo
+
                 profile = await graph_repo.PersonRepo().get_person(result.person_id)
                 if profile:
                     name = profile.get("name")
@@ -810,8 +843,14 @@ async def _update_last_face(detected, tool_ctx) -> None:
         if result.person_id is None:
             log.info("face lookup: unknown score=%.3f", result.score)
         else:
-            log.info("face lookup: %s name=%s score=%.3f known=%s possible=%s",
-                result.person_id, name, result.score, result.is_known, result.is_possible)
+            log.info(
+                "face lookup: %s name=%s score=%.3f known=%s possible=%s",
+                result.person_id,
+                name,
+                result.score,
+                result.is_known,
+                result.is_possible,
+            )
 
         tool_ctx.last_face = {
             "embedding": detected.embedding,
@@ -923,6 +962,7 @@ Check if it imports from `router.py`:
 ```python
 # Current:
 from tools.registry import ToolContext, build_registry, get_tool
+
 __all__ = ["ToolContext", "build_registry", "get_tool"]
 ```
 

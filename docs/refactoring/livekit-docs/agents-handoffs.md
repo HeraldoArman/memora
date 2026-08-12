@@ -28,13 +28,15 @@ Use `Agent.create` to define a custom agent with instructions, tools, and lifecy
 ```python
 from livekit.agents import Agent
 
+
 class HelpfulAssistant(Agent):
     def __init__(self):
         super().__init__(instructions="You are a helpful voice AI assistant.")
 
     async def on_enter(self) -> None:
-        await self.session.generate_reply(instructions="Greet the user and ask how you can help them.")
-
+        await self.session.generate_reply(
+            instructions="Greet the user and ask how you can help them."
+        )
 ```
 
 ---
@@ -60,7 +62,6 @@ You can also create an agent inline:
 
 ```python
 agent = Agent(instructions="You are a helpful voice AI assistant.")
-
 ```
 
 ---
@@ -86,7 +87,6 @@ session = AgentSession(
     agent=CustomerServiceAgent()
     # ...
 )
-
 ```
 
 ---
@@ -106,7 +106,6 @@ To set a new agent, use the `update_agent` method:
 
 ```python
 session.update_agent(CustomerServiceAgent())
-
 ```
 
 ---
@@ -126,6 +125,7 @@ A **handoff** transfers session control from one agent to another. You can retur
 ```python
 from livekit.agents import Agent, RunContext, function_tool
 
+
 class CustomerServiceAgent(Agent):
     def __init__(self):
         super().__init__(
@@ -135,7 +135,9 @@ class CustomerServiceAgent(Agent):
         )
 
     async def on_enter(self) -> None:
-        await self.session.generate_reply(instructions="Greet the user warmly and offer your assistance.")
+        await self.session.generate_reply(
+            instructions="Greet the user warmly and offer your assistance."
+        )
 
     @function_tool()
     async def transfer_to_billing(self, context: RunContext):
@@ -147,6 +149,7 @@ class CustomerServiceAgent(Agent):
         """Transfer the customer to technical support for product issues and troubleshooting."""
         return TechnicalSupportAgent(chat_ctx=self.chat_ctx), "Transferring to technical support"
 
+
 class BillingAgent(Agent):
     def __init__(self):
         super().__init__(
@@ -155,7 +158,10 @@ class BillingAgent(Agent):
         )
 
     async def on_enter(self) -> None:
-        await self.session.generate_reply(instructions="Introduce yourself as a billing specialist and ask how you can help with their account.")
+        await self.session.generate_reply(
+            instructions="Introduce yourself as a billing specialist and ask how you can help with their account."
+        )
+
 
 class TechnicalSupportAgent(Agent):
     def __init__(self):
@@ -166,8 +172,9 @@ class TechnicalSupportAgent(Agent):
         )
 
     async def on_enter(self) -> None:
-        await self.session.generate_reply(instructions="Introduce yourself as a technical support specialist and offer to help with any technical issues.")
-
+        await self.session.generate_reply(
+            instructions="Introduce yourself as a technical support specialist and offer to help with any technical issues."
+        )
 ```
 
 ---
@@ -263,11 +270,11 @@ To store custom state within your session, use the `userdata` attribute. The typ
 from livekit.agents import AgentSession
 from dataclasses import dataclass
 
+
 @dataclass
 class MySessionInfo:
     user_name: str | None = None
     age: int | None = None
-
 ```
 
 ---
@@ -290,7 +297,6 @@ session = AgentSession[MySessionInfo](
     userdata=MySessionInfo(),
     # ... tts, stt, llm, etc.
 )
-
 ```
 
 ---
@@ -311,9 +317,7 @@ Userdata is available as `session.userdata`, and is also available within functi
 ```python
 class IntakeAgent(Agent):
     def __init__(self):
-        super().__init__(
-            instructions="""You are an intake agent. Learn the user's name and age."""
-        )
+        super().__init__(instructions="""You are an intake agent. Learn the user's name and age.""")
 
     @function_tool()
     async def record_name(self, context: RunContext[MySessionInfo], name: str):
@@ -333,6 +337,7 @@ class IntakeAgent(Agent):
         else:
             return None
 
+
 class CustomerServiceAgent(Agent):
     def __init__(self):
         super().__init__(instructions="You are a friendly customer service representative.")
@@ -342,7 +347,6 @@ class CustomerServiceAgent(Agent):
         await self.session.generate_reply(
             instructions=f"Greet {userdata.user_name} personally and offer your assistance."
         )
-
 ```
 
 ---
@@ -419,13 +423,15 @@ When you pass `chat_ctx.copy()`, the copy includes any instructions in the chat 
 ```python
 from livekit.agents import ChatContext, function_tool, Agent
 
+
 class TechnicalSupportAgent(Agent):
     def __init__(self, chat_ctx: ChatContext):
         super().__init__(
             instructions="""You are a technical support specialist. Help customers troubleshoot
             product issues, setup problems, and technical questions.""",
-            chat_ctx=chat_ctx
+            chat_ctx=chat_ctx,
         )
+
 
 class CustomerServiceAgent(Agent):
     # ...
@@ -433,11 +439,12 @@ class CustomerServiceAgent(Agent):
     @function_tool()
     async def transfer_to_technical_support(self):
         """Transfer the customer to technical support for product issues and troubleshooting."""
-        await self.session.generate_reply(instructions="Inform the customer that you're transferring them to the technical support team.")
+        await self.session.generate_reply(
+            instructions="Inform the customer that you're transferring them to the technical support team."
+        )
 
         # Pass only the conversation turns, not the previous agent's instructions
         return TechnicalSupportAgent(chat_ctx=self.chat_ctx.copy(exclude_instructions=True))
-
 ```
 
 ---
@@ -496,6 +503,7 @@ In Python, [`LLMStream.collect()`](https://docs.livekit.io/agents/models/llm.md#
 ```python
 from livekit.agents import llm, ChatContext, function_tool, Agent, RunContext
 
+
 async def summarize_session(summarizer: llm.LLM, chat_ctx: ChatContext) -> str | None:
     """Generate a brief summary of user/assistant turns using a separate LLM call."""
     summary_ctx = ChatContext()
@@ -530,7 +538,9 @@ class TriageAgent(Agent):
     @function_tool()
     async def transfer_to_specialist(self, context: RunContext, topic: str):
         """Hand off to a specialist once triage is complete."""
-        summarizer = self.session.llm  # or pass a different model, e.g. openai.LLM(model="gpt-4o-mini")
+        summarizer = (
+            self.session.llm
+        )  # or pass a different model, e.g. openai.LLM(model="gpt-4o-mini")
         summary = await summarize_session(summarizer, self.chat_ctx) if summarizer else None
 
         # Build a fresh context with only the summary for the next agent
@@ -539,7 +549,6 @@ class TriageAgent(Agent):
             chat_ctx.add_message(role="system", content=f"Prior conversation summary: {summary}")
 
         return SpecialistAgent(topic, chat_ctx=chat_ctx)
-
 ```
 
 ---
@@ -633,13 +642,13 @@ For instance, you can change the voice for a specific agent by overriding the `t
 ```python
 from livekit.agents import Agent, inference
 
+
 class CustomerServiceManager(Agent):
     def __init__(self):
         super().__init__(
             instructions="You are a customer service manager who can handle escalated issues.",
-            tts=inference.TTS(model="inworld/inworld-tts-2", voice="Ashley")
+            tts=inference.TTS(model="inworld/inworld-tts-2", voice="Ashley"),
         )
-
 ```
 
 ---
@@ -673,13 +682,13 @@ The following tool switches the active agent to a more capable LLM for complex r
 ```python
 from livekit.agents import Agent, RunContext, function_tool
 
+
 class Assistant(Agent):
     @function_tool()
     async def escalate_to_advanced_model(self, context: RunContext) -> str:
         """Switch to a more capable model for complex requests."""
         self.update_options(llm="openai/gpt-5.3-chat-latest")
         return "Switched to the advanced model."
-
 ```
 
 > 🔥 **Realtime models can't be replaced on an active agent**

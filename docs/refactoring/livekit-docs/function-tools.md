@@ -20,6 +20,7 @@ Add tools to your agent class with the `@function_tool` decorator.
 from typing import Any
 from livekit.agents import function_tool, Agent, RunContext
 
+
 class MyAgent(Agent):
     @function_tool()
     async def lookup_weather(
@@ -34,7 +35,6 @@ class MyAgent(Agent):
         """
 
         return {"weather": "sunny", "temperature_f": 70}
-
 ```
 
 ---
@@ -137,9 +137,7 @@ class AddressAgent(Agent):
         )
 
     async def on_enter(self) -> None:
-        self.session.generate_reply(
-            instructions="Ask the user to provide their address."
-        )
+        self.session.generate_reply(instructions="Ask the user to provide their address.")
 
     @function_tool(flags=ToolFlag.IGNORE_ON_ENTER)
     async def confirm_address(self, ctx: RunContext) -> None:
@@ -147,7 +145,6 @@ class AddressAgent(Agent):
         # This tool is NOT available during on_enter,
         # preventing the LLM from confirming before the user speaks.
         ...
-
 ```
 
 ---
@@ -200,14 +197,16 @@ async def lookup_weather(context: RunContext, location: str) -> str:
     """Look up weather for a location."""
     return "sunny"
 
+
 lookup_weather.id  # "lookup_weather"
+
 
 @function_tool(name="get_weather")
 async def my_func(context: RunContext, location: str) -> str:
     return "sunny"
 
-my_func.id  # "get_weather"
 
+my_func.id  # "get_weather"
 ```
 
 ---
@@ -257,7 +256,6 @@ When a handoff occurs, prompt the LLM to inform the user:
 @function_tool()
 async def my_tool(context: RunContext):
     return SomeAgent(), "Transferring the user to SomeAgent"
-
 ```
 
 ---
@@ -302,6 +300,7 @@ class ResponseEmotion(TypedDict):
     ]
     response: str
 
+
 async def process_structured_output(
     text: AsyncIterable[str],
     callback: Optional[Callable[[ResponseEmotion], None]] = None,
@@ -325,7 +324,6 @@ async def process_structured_output(
         if new_delta:
             yield new_delta
         last_response = resp["response"]
-
 ```
 
 #### Agent method implementation
@@ -351,6 +349,7 @@ async def llm_node(
         async for chunk in stream:
             yield chunk
 
+
 async def tts_node(self, text: AsyncIterable[str], model_settings: ModelSettings):
     instruction_updated = False
 
@@ -373,7 +372,6 @@ async def tts_node(self, text: AsyncIterable[str], model_settings: ModelSettings
     return Agent.default.tts_node(
         self, process_structured_output(text, callback=output_processed), model_settings
     )
-
 ```
 
 ### RunContext
@@ -399,7 +397,6 @@ async def process_order(self, context: RunContext, order_id: str):
     # Now perform the actual order processing
     result = await process_order_internal(order_id)
     return result
-
 ```
 
 ---
@@ -476,7 +473,6 @@ class MyAgent(Agent):
         # Simulate a short lookup, such as a database or API query
         await asyncio.sleep(2)
         return f"Order {order_id} shipped and arrives tomorrow"
-
 ```
 
 ---
@@ -533,6 +529,7 @@ The following example defines a tool that fetches a realtime stock quote from an
 from livekit.agents import Agent, RunContext, function_tool, utils
 from livekit.agents.llm import ToolError
 
+
 class StockAgent(Agent):
     def __init__(self):
         super().__init__(
@@ -562,7 +559,6 @@ class StockAgent(Agent):
                 "volume": data["volume"],
                 "latest_trading_day": data["latestTradingDay"],
             }
-
 ```
 
 ---
@@ -634,7 +630,6 @@ async def place_order(
             raise ToolError("Failed to place order. Please try again.")
         data = await response.json()
         return f"Order {data['order_id']} placed successfully."
-
 ```
 
 ---
@@ -683,6 +678,7 @@ Tools set in the `tools` value are available alongside any registered within the
 ```python
 from livekit.agents import function_tool, Agent, RunContext
 
+
 @function_tool()
 async def lookup_user(
     context: RunContext,
@@ -707,7 +703,6 @@ class AgentB(Agent):
             tools=[lookup_user],
             # ...
         )
-
 ```
 
 ---
@@ -753,7 +748,6 @@ await agent.update_tools([t for t in agent.tools if t.id != tool_a.id])
 
 # replace all tools
 await agent.update_tools([tool_a, tool_b])
-
 ```
 
 ---
@@ -782,6 +776,7 @@ In the following example, the app has a single function to set any user profile 
 ```python
 from livekit.agents import function_tool, RunContext
 
+
 class Assistant(Agent):
     def _set_profile_field_func_for(self, field: str):
         async def set_value(context: RunContext, value: str):
@@ -793,17 +788,20 @@ class Assistant(Agent):
     def __init__(self):
         super().__init__(
             tools=[
-                function_tool(self._set_profile_field_func_for("phone"),
-                              name="set_phone_number",
-                              description="Call this function when user has provided their phone number."),
-                function_tool(self._set_profile_field_func_for("email"),
-                              name="set_email",
-                              description="Call this function when user has provided their email."),
+                function_tool(
+                    self._set_profile_field_func_for("phone"),
+                    name="set_phone_number",
+                    description="Call this function when user has provided their phone number.",
+                ),
+                function_tool(
+                    self._set_profile_field_func_for("email"),
+                    name="set_email",
+                    description="Call this function when user has provided their email.",
+                ),
                 # ... other tools ...
             ],
             # instructions, etc ...
         )
-
 ```
 
 ---
@@ -856,17 +854,13 @@ raw_schema = {
     "parameters": {
         "type": "object",
         "properties": {
-            "location": {
-                "type": "string",
-                "description": "City and country e.g. New York"
-            }
+            "location": {"type": "string", "description": "City and country e.g. New York"}
         },
-        "required": [
-            "location"
-        ],
-        "additionalProperties": False
-    }
+        "required": ["location"],
+        "additionalProperties": False,
+    },
 }
+
 
 @function_tool(raw_schema=raw_schema)
 async def get_weather(raw_arguments: dict[str, object], context: RunContext):
@@ -874,7 +868,6 @@ async def get_weather(raw_arguments: dict[str, object], context: RunContext):
 
     # Your implementation here
     return f"The weather of {location} is ..."
-
 ```
 
 ---
@@ -916,6 +909,7 @@ You can also create tools programmatically using `function_tool` as a function w
 ```python
 from livekit.agents import function_tool
 
+
 def create_database_tool(table_name: str, operation: str):
     schema = {
         "type": "function",
@@ -924,13 +918,10 @@ def create_database_tool(table_name: str, operation: str):
         "parameters": {
             "type": "object",
             "properties": {
-                "record_id": {
-                    "type": "string",
-                    "description": f"ID of the record to {operation}"
-                }
+                "record_id": {"type": "string", "description": f"ID of the record to {operation}"}
             },
-            "required": ["record_id"]
-        }
+            "required": ["record_id"],
+        },
     }
 
     async def handler(raw_arguments: dict[str, object], context: RunContext):
@@ -940,12 +931,14 @@ def create_database_tool(table_name: str, operation: str):
 
     return function_tool(handler, raw_schema=schema)
 
+
 # Create tools dynamically
 user_tools = [
     create_database_tool("users", "read"),
     create_database_tool("users", "update"),
-    create_database_tool("users", "delete")
+    create_database_tool("users", "delete"),
 ]
+
 
 class DataAgent(Agent):
     def __init__(self):
@@ -953,7 +946,6 @@ class DataAgent(Agent):
             instructions="You are a database assistant.",
             tools=user_tools,
         )
-
 ```
 
 ---
@@ -1014,7 +1006,6 @@ await agent.update_tools([new_tool_a, new_tool_b])
 
 # Instruction changes are also tracked
 await agent.update_instructions("You are now a support agent.")
-
 ```
 
 ---
@@ -1046,7 +1037,6 @@ This gives the LLM visibility into configuration changes, which is useful in [mu
         instructions="You are now a support agent.",
     ),
 ]
-
 ```
 
 ---
@@ -1067,7 +1057,6 @@ To exclude configuration updates when copying or serializing conversation histor
 
 ```python
 ctx_copy = chat_ctx.copy(exclude_config_update=True)
-
 ```
 
 ---
@@ -1092,10 +1081,11 @@ async def lookup_weather(
     location: str,
 ) -> dict:
     if location == "mars":
-        raise ToolError("This location is coming soon. Please join our mailing list to stay updated.")
+        raise ToolError(
+            "This location is coming soon. Please join our mailing list to stay updated."
+        )
     else:
         return {"weather": "sunny", "temperature_f": 70}
-
 ```
 
 ---
