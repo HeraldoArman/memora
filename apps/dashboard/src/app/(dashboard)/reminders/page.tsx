@@ -28,8 +28,8 @@ export default function RemindersPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-semibold">Reminders & Events</h1>
-        <p className="mt-1 text-sm text-neutral-400">
+        <h1 className="text-2xl font-semibold text-neutral-900">Reminders & Events</h1>
+        <p className="mt-1 text-sm text-neutral-600">
           Today's reminders, upcoming tasks, and calendar events.
         </p>
       </div>
@@ -48,10 +48,10 @@ export default function RemindersPage() {
                 {today.map((r) => (
                   <li
                     key={r.reminder_id}
-                    className="flex items-center justify-between rounded-md bg-ink-800/50 px-3 py-2"
+                    className="flex items-center justify-between rounded-lg bg-ink-800 px-3 py-2"
                   >
                     <div>
-                      <p className="text-sm text-neutral-200">{r.title}</p>
+                      <p className="text-sm text-neutral-800">{r.title}</p>
                       {r.note && <p className="text-xs text-ink-500">{r.note}</p>}
                       {r.due_at && (
                         <p className="mt-0.5 font-mono text-xs text-ink-500">
@@ -80,9 +80,9 @@ export default function RemindersPage() {
             ) : (
               <ul className="space-y-2">
                 {upcoming.map((r) => (
-                  <li key={r.reminder_id} className="rounded-md bg-ink-800/50 px-3 py-2">
+                  <li key={r.reminder_id} className="rounded-lg bg-ink-800 px-3 py-2">
                     <div className="flex items-center justify-between">
-                      <p className="text-sm text-neutral-200">{r.title}</p>
+                      <p className="text-sm text-neutral-800">{r.title}</p>
                       {r.due_at && (
                         <span className="font-mono text-xs text-ink-500">
                           {new Date(r.due_at).toLocaleString()}
@@ -108,9 +108,9 @@ export default function RemindersPage() {
             ) : (
               <ul className="space-y-2">
                 {events.map((e) => (
-                  <li key={e.event_id} className="rounded-md bg-ink-800/50 px-3 py-2">
+                  <li key={e.event_id} className="rounded-lg bg-ink-800 px-3 py-2">
                     <div className="flex items-center justify-between">
-                      <p className="text-sm text-neutral-200">{e.title}</p>
+                      <p className="text-sm text-neutral-800">{e.title}</p>
                       {e.starts_at && (
                         <span className="font-mono text-xs text-ink-500">
                           {new Date(e.starts_at).toLocaleString()}
@@ -130,7 +130,7 @@ export default function RemindersPage() {
 }
 
 function Skeleton() {
-  return <div className="h-24 animate-pulse rounded-md bg-ink-800/50" />;
+  return <div className="h-24 animate-pulse rounded-lg bg-ink-800" />;
 }
 
 function Empty({ text }: { text: string }) {

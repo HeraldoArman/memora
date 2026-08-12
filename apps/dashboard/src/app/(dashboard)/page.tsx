@@ -26,8 +26,8 @@ export default function OverviewPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-semibold">Overview</h1>
-        <p className="mt-1 text-sm text-neutral-400">
+        <h1 className="text-2xl font-semibold text-neutral-900">Overview</h1>
+        <p className="mt-1 text-sm text-neutral-600">
           System status and recent activity for the patient.
         </p>
       </div>
@@ -35,7 +35,7 @@ export default function OverviewPage() {
       {/* Stat cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          icon={<Activity className="size-5 text-accent-400" />}
+          icon={<Activity className="size-5 text-accent-500" />}
           label="Backend Status"
           value={
             health?.status === "ok"
@@ -47,17 +47,17 @@ export default function OverviewPage() {
           variant={health?.status === "ok" ? "ok" : "warn"}
         />
         <StatCard
-          icon={<CalendarClock className="size-5 text-sky-400" />}
+          icon={<CalendarClock className="size-5 text-sky-500" />}
           label="Reminders Today"
           value={String(reminders.length)}
         />
         <StatCard
-          icon={<MessagesSquare className="size-5 text-violet-400" />}
+          icon={<MessagesSquare className="size-5 text-violet-500" />}
           label="Recent Conversations"
           value={String(conversations.length)}
         />
         <StatCard
-          icon={<AlertTriangle className="size-5 text-warn-400" />}
+          icon={<AlertTriangle className="size-5 text-warn-500" />}
           label="Missed Reminders"
           value={String(reminders.filter((r) => !r.completed).length)}
           variant="warn"
@@ -78,9 +78,9 @@ export default function OverviewPage() {
                 {reminders.map((r) => (
                   <li
                     key={r.reminder_id}
-                    className="flex items-center justify-between rounded-md bg-ink-800/50 px-3 py-2"
+                    className="flex items-center justify-between rounded-lg bg-ink-800 px-3 py-2"
                   >
-                    <span className="text-sm">{r.title}</span>
+                    <span className="text-sm text-neutral-800">{r.title}</span>
                     <Badge variant={r.completed ? "ok" : "warn"}>
                       {r.completed ? "done" : "pending"}
                     </Badge>
@@ -102,8 +102,8 @@ export default function OverviewPage() {
             ) : (
               <ul className="space-y-2">
                 {conversations.map((c) => (
-                  <li key={c.id} className="rounded-md bg-ink-800/50 px-3 py-2">
-                    <p className="text-sm text-neutral-300">{c.summary ?? "No summary"}</p>
+                  <li key={c.id} className="rounded-lg bg-ink-800 px-3 py-2">
+                    <p className="text-sm text-neutral-700">{c.summary ?? "No summary"}</p>
                     <p className="mt-0.5 font-mono text-xs text-ink-500">
                       {c.started_at ? new Date(c.started_at).toLocaleString() : "—"}
                     </p>
@@ -132,10 +132,12 @@ function StatCard({
   return (
     <Card>
       <CardBody className="flex items-center gap-4">
-        <div className="flex size-10 items-center justify-center rounded-lg bg-ink-800">{icon}</div>
+        <div className="flex size-10 items-center justify-center rounded-lg bg-accent-500/10">
+          {icon}
+        </div>
         <div>
           <p className="font-mono text-xs uppercase tracking-widest text-ink-500">{label}</p>
-          <p className="mt-0.5 text-xl font-semibold">{value}</p>
+          <p className="mt-0.5 text-xl font-semibold text-neutral-900">{value}</p>
         </div>
       </CardBody>
     </Card>
@@ -143,7 +145,7 @@ function StatCard({
 }
 
 function Skeleton() {
-  return <div className="h-24 animate-pulse rounded-md bg-ink-800/50" />;
+  return <div className="h-24 animate-pulse rounded-lg bg-ink-800" />;
 }
 
 function Empty({ text }: { text: string }) {

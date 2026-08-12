@@ -28,9 +28,9 @@ export function Header() {
   const ok = health?.status === "ok";
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-ink-700 bg-ink-900 px-6">
+    <header className="flex h-14 items-center justify-between border-b border-accent-500/20 bg-ink-900 px-6">
       <div className="flex items-center gap-3">
-        <h1 className="font-mono text-sm font-semibold uppercase tracking-widest text-ink-500">
+        <h1 className="font-mono text-sm font-semibold uppercase tracking-widest text-accent-500">
           Caregiver Dashboard
         </h1>
       </div>

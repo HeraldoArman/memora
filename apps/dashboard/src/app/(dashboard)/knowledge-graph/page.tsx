@@ -10,15 +10,15 @@ import { Badge } from "@/components/ui/badge";
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), { ssr: false });
 
 const NODE_COLORS: Record<string, string> = {
-  Person: "#f97316",
-  User: "#f97316",
-  Organization: "#60a5fa",
-  Place: "#34d399",
+  Person: "#5038bc",
+  User: "#5038bc",
+  Organization: "#6248dc",
+  Place: "#7c5cf0",
   Object: "#a78bfa",
-  Food: "#fbbf24",
-  Event: "#f87171",
+  Food: "#c9cefc",
+  Event: "#a855f7",
   Preference: "#22d3ee",
-  Reminder: "#e879f9",
+  Reminder: "#d946ef",
 };
 
 export default function GraphPage() {
@@ -79,8 +79,8 @@ export default function GraphPage() {
   return (
     <div className="flex h-full flex-col p-6">
       <div className="mb-4">
-        <h1 className="text-2xl font-semibold">Knowledge Graph</h1>
-        <p className="mt-1 text-sm text-neutral-400">
+        <h1 className="text-2xl font-semibold text-neutral-900">Knowledge Graph</h1>
+        <p className="mt-1 text-sm text-neutral-600">
           Neo4j semantic memory — entities and their relationships.
         </p>
       </div>
@@ -89,7 +89,7 @@ export default function GraphPage() {
         {/* Graph canvas */}
         <div
           ref={containerRef}
-          className="relative flex-1 overflow-hidden rounded-lg border border-ink-700 bg-ink-900"
+          className="relative flex-1 overflow-hidden rounded-xl border border-accent-500/20 bg-gradient-to-br from-accent-500/5 to-ink-900"
         >
           {error ? (
             <div className="flex h-full items-center justify-center">
@@ -109,10 +109,10 @@ export default function GraphPage() {
               width={dims.w}
               height={dims.h}
               nodeLabel="label"
-              nodeColor={(node: any) => NODE_COLORS[node.type] ?? "#888"}
+              nodeColor={(node: any) => NODE_COLORS[node.type] ?? "#9aa0ae"}
               nodeRelSize={5}
               linkLabel="label"
-              linkColor={() => "#3e3e48"}
+              linkColor={() => "#c9cefc"}
               linkDirectionalArrowLength={4}
               linkDirectionalArrowRelPos={1}
               onNodeClick={(node: any) => setSelected(node)}
@@ -133,7 +133,7 @@ export default function GraphPage() {
                   <div key={type} className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="size-3 rounded-full" style={{ background: color }} />
-                      <span className="text-sm text-neutral-300">{type}</span>
+                      <span className="text-sm text-neutral-700">{type}</span>
                     </div>
                     <span className="font-mono text-xs text-ink-500">
                       {nodeTypeCounts[type] ?? 0}
@@ -155,7 +155,7 @@ export default function GraphPage() {
               <CardBody className="space-y-3">
                 <div>
                   <p className="font-mono text-xs uppercase tracking-widest text-ink-500">Name</p>
-                  <p className="text-sm text-neutral-200">{selected.label}</p>
+                  <p className="text-sm text-neutral-800">{selected.label}</p>
                 </div>
                 <div>
                   <p className="font-mono text-xs uppercase tracking-widest text-ink-500">Type</p>
@@ -172,7 +172,7 @@ export default function GraphPage() {
                       .map((l: any) => (
                         <li
                           key={l.id}
-                          className="rounded bg-ink-800/50 px-2 py-1 font-mono text-xs text-neutral-400"
+                          className="rounded bg-ink-800 px-2 py-1 font-mono text-xs text-neutral-600"
                         >
                           {l.source === selected.id ? "→" : "←"} {l.label}{" "}
                           {l.source === selected.id ? l.target : l.source}

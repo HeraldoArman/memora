@@ -5,8 +5,8 @@ type Variant = "primary" | "ghost" | "outline";
 
 const variants: Record<Variant, string> = {
   primary: "bg-accent-500 text-white hover:bg-accent-600",
-  ghost: "text-neutral-400 hover:text-neutral-100 hover:bg-ink-800",
-  outline: "border border-ink-600 text-neutral-300 hover:border-ink-500 hover:text-neutral-100",
+  ghost: "text-neutral-600 hover:text-accent-500 hover:bg-accent-500/10",
+  outline: "border border-ink-600 text-neutral-700 hover:border-accent-500 hover:text-accent-500",
 };
 
 interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -18,7 +18,7 @@ export function Button({ variant = "outline", className, children, ...props }: P
   return (
     <button
       className={cn(
-        "rounded-md px-4 py-2 text-sm font-medium transition-colors",
+        "rounded-lg px-4 py-2 text-sm font-medium transition-colors",
         variants[variant],
         className,
       )}

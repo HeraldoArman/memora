@@ -34,8 +34,8 @@ export default function ConversationsPage() {
   return (
     <div className="flex h-full flex-col p-6">
       <div className="mb-4">
-        <h1 className="text-2xl font-semibold">Conversations</h1>
-        <p className="mt-1 text-sm text-neutral-400">
+        <h1 className="text-2xl font-semibold text-neutral-900">Conversations</h1>
+        <p className="mt-1 text-sm text-neutral-600">
           Episodic memory — conversation sessions and transcripts.
         </p>
       </div>
@@ -49,7 +49,7 @@ export default function ConversationsPage() {
               {loading ? (
                 <div className="space-y-2">
                   {Array.from({ length: 5 }).map((_, i) => (
-                    <div key={i} className="h-16 animate-pulse rounded-md bg-ink-800/50" />
+                    <div key={i} className="h-16 animate-pulse rounded-lg bg-ink-800" />
                   ))}
                 </div>
               ) : sessions.length === 0 ? (
@@ -60,11 +60,13 @@ export default function ConversationsPage() {
                     key={s.id}
                     onClick={() => setSelected(s)}
                     className={cn(
-                      "block w-full rounded-md px-3 py-2 text-left transition-colors",
-                      selected?.id === s.id ? "bg-ink-800 text-accent-400" : "hover:bg-ink-800/50",
+                      "block w-full rounded-lg px-3 py-2 text-left transition-colors",
+                      selected?.id === s.id
+                        ? "bg-accent-500/10 text-accent-500"
+                        : "hover:bg-ink-800",
                     )}
                   >
-                    <p className="line-clamp-2 text-sm text-neutral-300">
+                    <p className="line-clamp-2 text-sm text-neutral-700">
                       {s.summary ?? "No summary"}
                     </p>
                     <p className="mt-1 font-mono text-xs text-ink-500">
@@ -92,7 +94,7 @@ export default function ConversationsPage() {
               ) : loadingMsgs ? (
                 <div className="space-y-2">
                   {Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="h-12 animate-pulse rounded-md bg-ink-800/50" />
+                    <div key={i} className="h-12 animate-pulse rounded-lg bg-ink-800" />
                   ))}
                 </div>
               ) : messages.length === 0 ? (
@@ -107,8 +109,8 @@ export default function ConversationsPage() {
                       className={cn(
                         "max-w-[80%] rounded-lg px-4 py-2",
                         m.role === "user"
-                          ? "ml-auto bg-accent-500/20 text-neutral-100"
-                          : "bg-ink-800 text-neutral-300",
+                          ? "ml-auto bg-accent-500/10 text-neutral-800"
+                          : "bg-ink-800 text-neutral-700",
                       )}
                     >
                       <div className="mb-1 flex items-center gap-2">
