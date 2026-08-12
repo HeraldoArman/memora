@@ -17,6 +17,15 @@ RUN bun install --frozen-lockfile
 FROM deps AS builder
 WORKDIR /app/apps/dashboard
 ENV NEXT_TELEMETRY_DISABLED=1
+# Railway injects matching service vars as build args. rewrites() in next.config
+# reads these at build time (standalone bakes them), so they must be present here,
+# not just at runtime. See https://docs.railway.com/guides/build-time-vs-runtime-secrets
+ARG NEXT_PUBLIC_BACKEND_URL
+ENV NEXT_PUBLIC_BACKEND_URL=$NEXT_PUBLIC_BACKEND_URL
+ARG NEXT_PUBLIC_LIVEKIT_URL
+ENV NEXT_PUBLIC_LIVEKIT_URL=$NEXT_PUBLIC_LIVEKIT_URL
+ARG NEXT_PUBLIC_WORKER_HEALTH_URL
+ENV NEXT_PUBLIC_WORKER_HEALTH_URL=$NEXT_PUBLIC_WORKER_HEALTH_URL
 RUN bun run build
 
 # --- runner: minimal, no node_modules ---
