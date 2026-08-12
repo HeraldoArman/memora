@@ -123,6 +123,12 @@ async def entrypoint(ctx: JobContext) -> None:
     display = Display(room)
     log.info("display wired to room %s", room.name)
 
+    # --- Create agent-log publisher (dashboard log pane) ---
+    from gateway.livekit.agent_log import AgentLog
+
+    agent_log = AgentLog(room)
+    log.info("agent log wired to room %s", room.name)
+
     # --- Create context engine for semantic memory retrieval ---
     from context.engine import ContextEngine
 
@@ -149,6 +155,7 @@ async def entrypoint(ctx: JobContext) -> None:
         on_extract=_on_extract,
         context_engine=context_engine,
         planner=planner,
+        on_log=agent_log.emit,
     )
     log.info("MemoraAgent created")
 
@@ -173,6 +180,7 @@ async def entrypoint(ctx: JobContext) -> None:
             return
         from dto.observations import SpeechObservation
 
+        asyncio.create_task(agent_log.emit("user", ev.transcript.strip()))
         asyncio.create_task(
             obs_engine.emit(
                 SpeechObservation(transcript=ev.transcript, is_final=True, confidence=0.95)
@@ -200,6 +208,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 if text:
                     log.info("display.show → publishing %d chars to topic=display", len(text))
                     asyncio.create_task(display.show(text))
+                    asyncio.create_task(agent_log.emit("assistant", text))
                 else:
                     log.debug("assistant message has no text content, skipping display")
             # Extraction: fire on user messages (turn boundary)
@@ -283,6 +292,7 @@ async def entrypoint(ctx: JobContext) -> None:
             log.info(
                 "prompt received: %r — generating reply via session.generate_reply", text[:200]
             )
+            asyncio.create_task(agent_log.emit("user", f"[prompt] {text}"))
             session.generate_reply(instructions=text)
         elif topic == "device":
             from gateway.livekit.data_channel import handle_data_received

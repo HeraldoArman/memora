@@ -41,12 +41,14 @@ class MemoraAgent(Agent):
         on_extract: Callable[[str, str | None], Awaitable[None]] | None = None,
         context_engine: Any = None,
         planner: Any = None,
+        on_log: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
         super().__init__(instructions=SYSTEM_INSTRUCTION)
         self._tool_ctx = tool_ctx
         self._on_extract = on_extract
         self._context_engine = context_engine
         self._planner = planner
+        self._on_log = on_log
         log.info(
             "MemoraAgent constructed: instructions=%d chars, tool_ctx=%s, on_extract=%s, context_engine=%s, planner=%s",
             len(SYSTEM_INSTRUCTION),
@@ -137,12 +139,22 @@ class MemoraAgent(Agent):
 
     # --- Tool dispatch ---
 
+    async def _emit_log(self, kind: str, text: str) -> None:
+        """Forward an activity event to the dashboard (swallow errors)."""
+        if self._on_log is None:
+            return
+        try:
+            await self._on_log(kind, text)
+        except Exception:  # noqa: BLE001
+            log.debug("agent_log emit failed (kind=%s)", kind, exc_info=True)
+
     def _dispatch(self, name: str) -> Callable[[dict, RunContext], Awaitable[Any]]:
         """Return a handler that forwards raw_arguments to the registry callable."""
         registry = build_registry()
 
         async def _handler(raw_arguments: dict[str, object], ctx: RunContext) -> Any:
             log.info("tool call: %s args=%s", name, dict(raw_arguments))
+            await self._emit_log("tool_call", f"{name} {dict(raw_arguments)}")
             func = registry.get(name)
             if func is None:
                 log.error("tool not found in registry: %s", name)
@@ -153,6 +165,9 @@ class MemoraAgent(Agent):
                     "tool result: %s → %s",
                     name,
                     str(result)[:300] if result else "None",
+                )
+                await self._emit_log(
+                    "tool_result", f"{name} → {str(result)[:300] if result else 'None'}"
                 )
             except Exception as exc:  # noqa: BLE001
                 log.warning("tool %s failed: %s", name, exc, exc_info=True)
