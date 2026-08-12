@@ -31,15 +31,20 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 COPY --from=builder --chown=nonroot:nonroot /app /app
 
-# Pre-fetch InsightFace buffalo_l weights (~300MB) so runtime doesn't download
+# Pre-fetch InsightFace buffalo_l weights (~58MB) so runtime doesn't download
 # on first face detection. InsightFace expects them at {FACE_MODEL_ROOT}/models/buffalo_l/.
+# GitHub release downloads are flaky from some build hosts (curl 56: connection died),
+# so retry hard and make the fetch non-fatal: if it still fails, InsightFace downloads
+# the weights itself on first init at runtime (needs network there).
 RUN apt-get update && apt-get install -y --no-install-recommends unzip ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /app/models/insightface/models \
-    && curl -fsSL -o /tmp/buffalo_l.zip \
-       "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip" \
-    && unzip -q /tmp/buffalo_l.zip -d /app/models/insightface/models/buffalo_l \
-    && rm /tmp/buffalo_l.zip
+    && ( curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors --connect-timeout 30 --max-time 300 \
+            -o /tmp/buffalo_l.zip \
+            "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip" \
+         && unzip -q /tmp/buffalo_l.zip -d /app/models/insightface/models/buffalo_l \
+         && rm /tmp/buffalo_l.zip ) \
+      || echo "WARN: buffalo_l weights not fetched; InsightFace will download at runtime"
 
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "apps/backend"]
