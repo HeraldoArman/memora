@@ -7,15 +7,13 @@ Tools are thin service callers. We build a ToolContext whose services are AsyncM
 from __future__ import annotations
 
 from datetime import datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import numpy as np
 import pytest
 
 from constants import ToolName
-from dto.observations import CurrentContext, DeviceObservation, FaceObservation
-from reasoning.tools.router import _resp, dispatch_tool_call
 from tools import ToolContext, get_tool
 
 # Re-import the tool modules so we test the exact callables the registry wires.
@@ -48,40 +46,84 @@ def _ctx(**overrides) -> ToolContext:
     return ctx
 
 
-def _ctx_with_context(*observations) -> ToolContext:
+def _ctx_with_face(**face_fields) -> ToolContext:
+    """ToolContext with last_face set (bare-minimum: replaces current_context)."""
     ctx = _ctx()
-    ctx.current_context = CurrentContext(observations=list(observations))
+    if face_fields:
+        ctx.last_face = face_fields
     return ctx
 
 
 def _face_ctx() -> ToolContext:
     emb = np.zeros(512, dtype=np.float32)
-    return _ctx_with_context(FaceObservation(embedding=emb))
+    return _ctx_with_face(embedding=emb)
 
 
 class TestObservationTools:
-    async def test_current_scene_happy(self) -> None:
+    async def test_current_scene_unavailable(self) -> None:
+        # no last_scene → unavailable
+        assert await obs.current_scene({}, _ctx()) == {
+            "available": False,
+            "location": None,
+            "activity": None,
+        }
+
+    async def test_current_scene_available(self) -> None:
         ctx = _ctx()
-        ctx.current_context = CurrentContext(scene="apotek", activity="beli obat", confidence=0.9)
-        assert await obs.current_scene({}, ctx) == {
+        ctx.last_scene = {
             "location": "apotek",
+            "objects": ["obat", "rak"],
             "activity": "beli obat",
             "confidence": 0.9,
         }
+        result = await obs.current_scene({}, ctx)
+        assert result["available"] is True
+        assert result["location"] == "apotek"
+        assert result["objects"] == ["obat", "rak"]
+        assert result["activity"] == "beli obat"
+        assert result["confidence"] == 0.9
 
-    async def test_current_scene_none(self) -> None:
-        assert await obs.current_scene({}, _ctx()) == {"available": False}
-
-    async def test_visible_people(self) -> None:
+    async def test_current_scene_no_location(self) -> None:
         ctx = _ctx()
-        ctx.current_context = CurrentContext(visible_people=["Asep"])
+        ctx.last_scene = {"location": None, "objects": [], "activity": None}
+        result = await obs.current_scene({}, ctx)
+        assert result["available"] is False
+
+    async def test_visible_people_known(self) -> None:
+        ctx = _ctx_with_face(is_known=True, name="Asep")
         assert await obs.visible_people({}, ctx) == {"available": True, "people": ["Asep"]}
+
+    async def test_visible_people_unknown(self) -> None:
+        ctx = _ctx_with_face(is_known=False, is_possible=False, name=None)
+        assert await obs.visible_people({}, ctx) == {
+            "available": True,
+            "people": ["Orang tidak dikenali"],
+        }
+
+    async def test_visible_people_none(self) -> None:
         assert await obs.visible_people({}, _ctx()) == {"available": False, "people": []}
 
-    async def test_current_activity(self) -> None:
+    async def test_current_activity_unavailable(self) -> None:
+        # no last_scene → unavailable
+        assert await obs.current_activity({}, _ctx()) == {
+            "available": False,
+            "activity": None,
+            "location": None,
+        }
+
+    async def test_current_activity_available(self) -> None:
         ctx = _ctx()
-        ctx.current_context = CurrentContext(activity="makan", scene="rumah")
-        assert await obs.current_activity({}, ctx) == {"activity": "makan", "location": "rumah"}
+        ctx.last_scene = {
+            "location": "dapur",
+            "objects": ["kompor"],
+            "activity": "memasak",
+            "confidence": 0.85,
+        }
+        result = await obs.current_activity({}, ctx)
+        assert result["available"] is True
+        assert result["activity"] == "memasak"
+        assert result["location"] == "dapur"
+        assert result["confidence"] == 0.85
 
     async def test_conversation_summary(self) -> None:
         ctx = _ctx()
@@ -170,11 +212,12 @@ class TestPersonTools:
     async def test_register_face_happy(self) -> None:
         ctx = _face_ctx()
         ctx.person_service.register_face = AsyncMock(return_value=3)
-        assert await per.register_face({"person_id": "p1"}, ctx) == {
-            "person_id": "p1",
-            "enrolled": True,
-            "face_index_row": 3,
-        }
+        result = await per.register_face({"person_id": "p1"}, ctx)
+        assert result["person_id"] == "p1"
+        assert result["enrolled"] is True
+        assert result["face_index_row"] == 3
+        # persisted=False is expected — no DB in unit tests
+        assert result["persisted"] is False
 
     async def test_update_person(self) -> None:
         ctx = _ctx()
@@ -379,26 +422,15 @@ class _BoomRetriever:
 
 
 class TestSystemTools:
-    def _dev_ctx(self) -> ToolContext:
-        return _ctx_with_context(DeviceObservation(battery_level=80, wifi_connected=True))
-
+    # bare-minimum: device telemetry unavailable (no observation engine)
     async def test_battery_status(self) -> None:
         assert await sys_tools.battery_status({}, _ctx()) == {"available": False}
-        assert await sys_tools.battery_status({}, self._dev_ctx()) == {
-            "battery_level": 80,
-            "available": True,
-        }
 
     async def test_network_status(self) -> None:
         assert await sys_tools.network_status({}, _ctx()) == {"available": False}
-        assert await sys_tools.network_status({}, self._dev_ctx()) == {
-            "wifi_connected": True,
-            "available": True,
-        }
 
     async def test_device_information(self) -> None:
-        out = await sys_tools.device_information({}, self._dev_ctx())
-        assert out["device"]["battery_level"] == 80
+        out = await sys_tools.device_information({}, _ctx())
         assert "firmware" in out
 
     async def test_firmware_version(self) -> None:
@@ -420,58 +452,85 @@ class TestToolContext:
     def test_current_face_embedding(self) -> None:
         assert _ctx().current_face_embedding() is None
         emb = np.ones(512, dtype=np.float32)
-        ctx = _ctx_with_context(FaceObservation(embedding=emb))
+        ctx = _ctx_with_face(embedding=emb)
         assert ctx.current_face_embedding() is emb
 
     def test_unknown_embedding_cached(self) -> None:
         """Unknown face embedding is cached so register_face works after person leaves."""
         emb = np.ones(512, dtype=np.float32)
-        ctx = _ctx_with_context(FaceObservation(embedding=emb, is_known=False))
+        ctx = _ctx_with_face(embedding=emb, is_known=False)
         assert ctx.current_face_embedding() is emb
-        # Person leaves frame — context cleared
-        ctx.current_context = None
+        # Person leaves frame — last_face cleared
+        ctx.last_face = None
         # Cache should still serve the embedding
         assert ctx.current_face_embedding() is emb
 
     def test_cached_embedding_expires(self) -> None:
         """Cached unknown embedding expires after TTL."""
         emb = np.ones(512, dtype=np.float32)
-        ctx = _ctx_with_context(FaceObservation(embedding=emb, is_known=False))
+        ctx = _ctx_with_face(embedding=emb, is_known=False)
         ctx.current_face_embedding()  # populate cache
         # Expire the deadline
         ctx._unknown_embedding_deadline = 0.0
-        ctx.current_context = None
+        ctx.last_face = None
         assert ctx.current_face_embedding() is None
 
     def test_known_face_not_cached_as_unknown(self) -> None:
         """A known face should not populate the unknown cache."""
         emb = np.ones(512, dtype=np.float32)
-        ctx = _ctx_with_context(
-            FaceObservation(embedding=emb, is_known=True, person_id="p1", name="Asep")
-        )
+        ctx = _ctx_with_face(embedding=emb, is_known=True, person_id="p1", name="Asep")
         ctx.current_face_embedding()  # known — should NOT cache
         assert ctx._last_unknown_embedding is None
-        ctx.current_context = None
+        ctx.last_face = None
         assert ctx.current_face_embedding() is None  # no fallback
 
     def test_cache_refreshed_on_new_unknown(self) -> None:
         """A second unknown face refreshes the cache with the latest embedding."""
         emb1 = np.ones(512, dtype=np.float32)
         emb2 = np.zeros(512, dtype=np.float32)
-        ctx = _ctx_with_context(FaceObservation(embedding=emb1, is_known=False))
+        ctx = _ctx_with_face(embedding=emb1, is_known=False)
         ctx.current_face_embedding()
-        ctx.current_context = CurrentContext(
-            observations=[FaceObservation(embedding=emb2, is_known=False)]
-        )
+        ctx.last_face = {"embedding": emb2, "is_known": False}
         assert ctx.current_face_embedding() is emb2  # latest wins
-        ctx.current_context = None
+        ctx.last_face = None
         assert ctx.current_face_embedding() is emb2  # cache holds latest
 
     def test_device_snapshot(self) -> None:
+        # no working_memory → empty
         assert _ctx().device_snapshot() == {}
-        ctx = _ctx_with_context(DeviceObservation(battery_level=55, wifi_connected=False))
+
+    def test_device_snapshot_from_working_memory(self) -> None:
+        from dto.observations import CurrentContext, DeviceObservation
+
+        ctx = _ctx()
+        wm = MagicMock()
+        ctx.working_memory = wm
+        wm.get.return_value = CurrentContext(
+            observations=[DeviceObservation(battery_level=72, wifi_connected=True, confidence=1.0)]
+        )
         snap = ctx.device_snapshot()
-        assert snap == {"battery_level": 55, "wifi_connected": False, "button_pressed": False}
+        assert snap["battery_level"] == 72
+        assert snap["wifi_connected"] is True
+
+    def test_device_snapshot_no_device_obs(self) -> None:
+        from dto.observations import CurrentContext, FaceObservation
+
+        ctx = _ctx()
+        wm = MagicMock()
+        ctx.working_memory = wm
+        wm.get.return_value = CurrentContext(
+            observations=[
+                FaceObservation(person_id="p1", name="Asep", confidence=0.9, is_known=True)
+            ]
+        )
+        assert ctx.device_snapshot() == {}
+
+    def test_device_snapshot_expired_context(self) -> None:
+        ctx = _ctx()
+        wm = MagicMock()
+        ctx.working_memory = wm
+        wm.get.return_value = None  # expired
+        assert ctx.device_snapshot() == {}
 
 
 class TestRegistry:
@@ -486,56 +545,3 @@ class TestRegistry:
     def test_get_tool(self) -> None:
         assert get_tool("firmware_version") is sys_tools.firmware_version
         assert get_tool("nope") is None
-
-
-class TestRouter:
-    def test_resp_shape(self) -> None:
-        assert _resp("c1", "x", {"a": 1}) == {"id": "c1", "name": "x", "response": {"a": 1}}
-
-    async def test_dispatch_known_and_unknown(self) -> None:
-        from google.genai import types
-
-        from tools import registry as reg
-
-        async def _fake(args, ctx):
-            return {"ok": True}
-
-        orig = reg.build_registry()
-        reg._REGISTRY = {**orig, "firmware_version": _fake}
-        try:
-            tc = types.LiveServerToolCall(
-                function_calls=[
-                    types.FunctionCall(id="c1", name="firmware_version", args={}),
-                    types.FunctionCall(id="c2", name="bogus", args={}),
-                ]
-            )
-            resps = await dispatch_tool_call(tc, _ctx())
-        finally:
-            reg._REGISTRY = orig
-        assert resps[0]["id"] == "c1" and resps[0]["response"] == {"ok": True}
-        assert "unknown tool" in resps[1]["response"]["error"]
-
-    async def test_dispatch_tool_error_is_caught(self) -> None:
-        from google.genai import types
-
-        from tools import registry as reg
-
-        async def _boom(args, ctx):
-            raise ValueError("kaboom")
-
-        orig = reg.build_registry()
-        reg._REGISTRY = {**orig, "firmware_version": _boom}
-        try:
-            tc = types.LiveServerToolCall(
-                function_calls=[types.FunctionCall(id="c1", name="firmware_version", args={})]
-            )
-            resps = await dispatch_tool_call(tc, _ctx())
-        finally:
-            reg._REGISTRY = orig
-        assert "ValueError" in resps[0]["response"]["error"]
-
-    async def test_dispatch_empty_calls(self) -> None:
-        from google.genai import types
-
-        resps = await dispatch_tool_call(types.LiveServerToolCall(function_calls=[]), _ctx())
-        assert resps == []

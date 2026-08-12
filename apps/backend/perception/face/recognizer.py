@@ -2,15 +2,20 @@
 
 Lazy-loaded: the model (~300MB buffalo_l) is initialized on first detect, not at import.
 Behind an adapter so it can swap to a GPU microservice without touching perception wiring
-(plan: GCP GPU fallback). CPU inference is heavy (~100-500ms/face) but acceptable at 1 FPS.
+(plan: GCP GPU fallback). CPU inference is heavy (~100-500ms/face) but acceptable at 0.5 FPS.
 
-buffalo_l is non-commercial (research-only) — documented in README. Auto-downloads weights
+bison_l is non-commercial (research-only) — documented in README. Auto-downloads weights
 to FACE_MODEL_ROOT on first init (needs network).
+
+Known issue: ONNX Runtime CPUExecutionProvider leaks ~20-50MB per session.run() call.
+This is a confirmed upstream bug (onnxruntime#9313, #22271; insightface#1659) open since
+2021. We work around it by recreating the session every _MAX_INFERENCE_CALLS calls.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 
 import numpy as np
@@ -19,6 +24,12 @@ from env import get_settings
 logger = logging.getLogger(__name__)
 
 _FACE_APP = None  # lazy singleton
+_FACE_LOCK = threading.Lock()
+_INFERENCE_COUNT = 0
+# Recreate the ONNX session every N calls to flush leaked memory.
+# At 0.5 FPS, 30 calls = ~60s. Each leak is ~20-50MB, so 30 calls = ~600MB-1.5GB
+# before reset. The recreate takes ~4s (model reload) but frees all leaked memory.
+_MAX_INFERENCE_CALLS = 30
 
 
 @dataclass
@@ -31,10 +42,19 @@ class DetectedFace:
 
 
 def _load_app():
-    """Initialize InsightFace FaceAnalysis once (lazy)."""
+    """Initialize InsightFace FaceAnalysis once (lazy). Thread-safe via lock."""
     global _FACE_APP
     if _FACE_APP is not None:
         return _FACE_APP
+    with _FACE_LOCK:
+        if _FACE_APP is not None:
+            return _FACE_APP
+        _FACE_APP = _create_app()
+        return _FACE_APP
+
+
+def _create_app():
+    """Create a fresh FaceAnalysis instance (used for initial load + recycle)."""
     from insightface.app import FaceAnalysis
 
     settings = get_settings()
@@ -45,9 +65,29 @@ def _load_app():
         providers=["CPUExecutionProvider"],
     )
     app.prepare(ctx_id=-1, det_size=(640, 640))
-    _FACE_APP = app
     logger.info("insightface ready")
     return app
+
+
+def _recycle_app():
+    """Delete + recreate the ONNX session to flush leaked memory.
+
+    ONNX Runtime CPUExecutionProvider leaks ~20-50MB per run() call (upstream bug
+    #9313, open since 2021). Recreating the session frees all accumulated memory.
+    Takes ~4s (model reload) but prevents OOM kills.
+    """
+    global _FACE_APP, _INFERENCE_COUNT
+    with _FACE_LOCK:
+        old = _FACE_APP
+        _FACE_APP = None
+        _INFERENCE_COUNT = 0
+        if old is not None:
+            del old
+        import gc
+
+        gc.collect()
+        logger.info("recycling insightface session (ONNX CPU memory leak workaround)")
+        _FACE_APP = _create_app()
 
 
 def preload() -> None:
@@ -60,14 +100,19 @@ class FaceRecognizer:
     when moving to a GPU worker (interface stays identical)."""
 
     def detect_and_embed(
-        self, img: np.ndarray, *, max_num: int = 0, min_det_score: float = 0.5
+        self, img: np.ndarray, *, max_num: int = 0, min_det_score: float = 0.3
     ) -> list[DetectedFace]:
         """Detect faces in img (BGR uint8 HxWx3). Returns [] if none. max_num=0 → all.
 
         min_det_score filters low-confidence detections (e.g. water bottles, shadows)
         so they don't produce spurious embeddings that surface as "Orang tidak dikenali".
         """
+        global _INFERENCE_COUNT
         app = _load_app()
+        _INFERENCE_COUNT += 1
+        if _INFERENCE_COUNT >= _MAX_INFERENCE_CALLS:
+            _recycle_app()
+            app = _FACE_APP
         faces = app.get(img, max_num=max_num)
         result: list[DetectedFace] = []
         for f in faces:

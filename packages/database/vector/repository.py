@@ -5,7 +5,7 @@ index i ↔ person_ids[i]. register() appends; lookup() searches and maps row→
 The sidecar lives in memory; the durable store is the face_embeddings Postgres table.
 Both the backend and worker rebuild their in-process FAISS index from Postgres on startup.
 
-face_recognition.md §10 thresholds: >=0.80 known, 0.60–0.80 possible, <0.60 unknown.
+face_recognition.md §10 thresholds: >=0.50 known, 0.35–0.50 possible, <0.35 unknown.
 """
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ class FaceRepository:
         index: FaceIndex,
         person_ids: list[str] | None = None,
         *,
-        known_threshold: float = 0.80,
-        possible_threshold: float = 0.60,
+        known_threshold: float = 0.50,
+        possible_threshold: float = 0.35,
     ) -> None:
         self.index = index
         self.person_ids: list[str] = person_ids if person_ids is not None else []
@@ -87,7 +87,7 @@ class FaceRepository:
 
     @classmethod
     def load(
-        cls, path: str, *, known_threshold: float = 0.80, possible_threshold: float = 0.60
+        cls, path: str, *, known_threshold: float = 0.50, possible_threshold: float = 0.35
     ) -> FaceRepository:
         """Load index + sidecar. Missing sidecar → empty (fresh) mapping."""
         from vector.index import FaceIndex
@@ -106,8 +106,8 @@ class FaceRepository:
     async def from_db(
         cls,
         *,
-        known_threshold: float = 0.80,
-        possible_threshold: float = 0.60,
+        known_threshold: float = 0.50,
+        possible_threshold: float = 0.35,
         dim: int = 512,
     ) -> FaceRepository:
         """Rebuild the in-process FAISS index from the face_embeddings Postgres table.
@@ -124,6 +124,11 @@ class FaceRepository:
         sm = get_sessionmaker()
         async with sm() as db:
             rows = await repo.load_all(db)
+        import logging as _log
+
+        _log.getLogger(__name__).info(
+            "from_db: loaded %d face embedding(s) from Postgres", len(rows)
+        )
         for person_id, emb in rows:
             index.add(l2_normalize(emb).astype(np.float32))
             person_ids.append(person_id)

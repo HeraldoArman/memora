@@ -29,9 +29,13 @@ class PipelineRunner:
         *,
         extractor: KnowledgeExtractor | None = None,
         consolidator: Consolidator | None = None,
+        text_embedder=None,
+        text_index=None,
     ) -> None:
         self.extractor = extractor or KnowledgeExtractor()
-        self.consolidator = consolidator or Consolidator()
+        self.consolidator = consolidator or Consolidator(
+            text_embedder=text_embedder, text_index=text_index
+        )
 
     async def run(self, content: str, *, session_id: str | None = None) -> dict:
         """Extract + consolidate `content`. Returns the consolidator summary.

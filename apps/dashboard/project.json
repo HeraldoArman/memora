@@ -7,7 +7,7 @@
     "dev": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "next dev",
+        "command": "mkdir -p ../../logs && next dev 2>&1 | tee ../../logs/dashboard.log",
         "cwd": "apps/dashboard"
       }
     },

@@ -48,11 +48,11 @@ class FrameSampler:
             last_emit = now
             argb = frame.convert(rtc.VideoBufferType.BGRA).data
             h, w = frame.height, frame.width
-            bgra = np.frombuffer(argb, dtype=np.uint8).reshape(h, w, 4)
-            bgr = bgra[:, :, :3]  # drop alpha; BGRA→BGR
-            jpeg = _encode_jpeg(bgr)
+            # copy to break reference to LiveKit's internal buffer (np.frombuffer
+            # creates a view that keeps the original alive → memory leak)
+            bgr = np.frombuffer(argb, dtype=np.uint8).reshape(h, w, 4)[:, :, :3].copy()
             self.frame_no += 1
-            yield {"frame_no": self.frame_no, "bgr": bgr, "jpeg": jpeg}
+            yield {"frame_no": self.frame_no, "bgr": bgr}
 
 
 def _encode_jpeg(bgr: np.ndarray) -> bytes:

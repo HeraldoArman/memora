@@ -24,6 +24,8 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 
+import numpy as np
+
 from dto.observations import CurrentContext
 
 log = logging.getLogger(__name__)
@@ -32,6 +34,7 @@ _DEFAULT_INTERVAL_S = 30.0
 _DEFAULT_COOLDOWN_S = 300.0
 _UNKNOWN_PERSON_COOLDOWN_S = 120.0  # don't re-ask "Siapa ini?" within 2 min
 _UNKNOWN_PERSON_KEY = "__unknown_person__"
+_SEMANTIC_THRESHOLD = 0.5  # cosine similarity for location→item matching
 
 
 class ProactivePlanner:
@@ -44,12 +47,14 @@ class ProactivePlanner:
         shopping_service,
         interval_s: float = _DEFAULT_INTERVAL_S,
         cooldown_s: float = _DEFAULT_COOLDOWN_S,
+        text_embedder=None,
         _clock=time.monotonic,
     ) -> None:
         self.reminder_service = reminder_service
         self.shopping_service = shopping_service
         self.interval_s = interval_s
         self.cooldown_s = cooldown_s
+        self.text_embedder = text_embedder
         self._clock = _clock
         self._fired: dict[tuple[str, str], float] = {}  # (item_id, location) → last_fired
         self._task: asyncio.Task | None = None
@@ -68,7 +73,8 @@ class ProactivePlanner:
             return None
         location = current.scene.lower()
 
-        # 1. Check pending reminders
+        # Gather candidates: (id, text, label, kind)
+        candidates: list[tuple[str, str, str, str]] = []
         try:
             reminders = await self.reminder_service.upcoming(limit=20)
         except Exception:  # noqa: BLE001
@@ -79,18 +85,10 @@ class ProactivePlanner:
                 continue
             title = (r.get("title") or "").lower()
             note = (r.get("note") or "").lower()
-            text = f"{title} {note}"
-            if _keyword_overlap(location, text):
-                rid = str(r.get("reminder_id", title))
-                if not self._should_fire(rid, location):
-                    continue
-                self._mark_fired(rid, location)
-                return _build_prompt(
-                    f"Pengguna berada di {current.scene}. Ada pengingat: {r.get('title')}. "
-                    f"Beritahu pengguna secara singkat dan hangat."
-                )
+            text = f"{title} {note}".strip()
+            rid = str(r.get("reminder_id", title))
+            candidates.append((rid, text, r.get("title", ""), "reminder"))
 
-        # 2. Check shopping list (unchecked items)
         try:
             items = await self.shopping_service.list_items()
         except Exception:  # noqa: BLE001
@@ -100,17 +98,53 @@ class ProactivePlanner:
             if item.get("checked"):
                 continue
             name = (item.get("name") or "").lower()
-            if _keyword_overlap(location, name):
-                iid = str(item.get("name", name))
-                if not self._should_fire(iid, location):
-                    continue
-                self._mark_fired(iid, location)
-                return _build_prompt(
-                    f"Pengguna berada di {current.scene}. Ada item belanja: {item.get('name')}. "
-                    f"Beritahu pengguna secara singkat dan hangat."
-                )
+            iid = str(item.get("name", name))
+            candidates.append((iid, name, item.get("name", ""), "shopping"))
+
+        # Pass 1: keyword overlap (free)
+        unmatched: list[tuple[str, str, str, str]] = []
+        for cid, text, label, kind in candidates:
+            if _keyword_overlap(location, text):
+                if self._should_fire(cid, location):
+                    self._mark_fired(cid, location)
+                    return _build_prompt_for(kind, label, current.scene)
+                continue
+            unmatched.append((cid, text, label, kind))
+
+        # Pass 2: semantic similarity (one batch embed call per cycle)
+        if self.text_embedder is not None and unmatched:
+            match = await self._semantic_match(location, unmatched)
+            if match is not None:
+                cid, _text, label, kind = match
+                if self._should_fire(cid, location):
+                    self._mark_fired(cid, location)
+                    return _build_prompt_for(kind, label, current.scene)
 
         return None
+
+    async def _semantic_match(
+        self, location: str, unmatched: list[tuple[str, str, str, str]]
+    ) -> tuple[str, str, str, str] | None:
+        """Embed location + unmatched texts, return best match above threshold."""
+        try:
+            texts = [location] + [text for _, text, _, _ in unmatched]
+            embeddings = await self.text_embedder.embed_batch(texts)
+            if not embeddings or embeddings[0] is None:
+                return None
+            loc_vec = embeddings[0]
+            best_score = _SEMANTIC_THRESHOLD
+            best: tuple[str, str, str, str] | None = None
+            for i, emb in enumerate(embeddings[1:]):
+                if emb is None:
+                    continue
+                score = float(np.dot(loc_vec, emb))
+                if score > best_score:
+                    best_score = score
+                    best = unmatched[i]
+            return best
+        except Exception:  # noqa: BLE001
+            log.warning("planner: semantic match failed", exc_info=True)
+            return None
 
     def _check_unknown_person(self, current: CurrentContext) -> str | None:
         """Fire 'Siapa ini?' when an unknown person is visible and the user is talking.
@@ -193,6 +227,18 @@ def _build_prompt(text: str) -> str:
     return f"[PROAKTIF] {text}"
 
 
+def _build_prompt_for(kind: str, label: str, scene: str | None) -> str:
+    if kind == "reminder":
+        return _build_prompt(
+            f"Pengguna berada di {scene}. Ada pengingat: {label}. "
+            f"Beritahu pengguna secara singkat dan hangat."
+        )
+    return _build_prompt(
+        f"Pengguna berada di {scene}. Ada item belanja: {label}. "
+        f"Beritahu pengguna secara singkat dan hangat."
+    )
+
+
 # --- self-check ---
 def _self_check() -> None:  # pragma: no cover
     import asyncio
@@ -268,8 +314,38 @@ def _self_check() -> None:  # pragma: no cover
         result9 = await planner.check(ctx3)
         assert result9 is not None and "Siapa ini" in result9, result9
 
+        # --- Semantic matching (text_embedder wired) ---
+        # "apotek" vs "beli paracetamol" — no keyword overlap, but semantically close
+        class _FakeEmbedder:
+            async def embed_batch(self, texts):
+                # Return deterministic vectors: location "apotek" is close to
+                # "beli paracetamol" but far from "telur"
+                vecs = {
+                    "apotek": np.array([0.9, 0.1, 0.0], dtype=np.float32),
+                    "beli paracetamol": np.array([0.85, 0.15, 0.0], dtype=np.float32),
+                    "telur": np.array([0.0, 0.0, 1.0], dtype=np.float32),
+                }
+                return [vecs.get(t, np.zeros(3, dtype=np.float32)) for t in texts]
+
+        planner2 = ProactivePlanner(
+            reminder_service=AsyncMock(),
+            shopping_service=AsyncMock(),
+            cooldown_s=100,
+            text_embedder=_FakeEmbedder(),
+            _clock=lambda: C.t,
+        )
+        planner2.reminder_service.upcoming = AsyncMock(
+            return_value=[{"reminder_id": "r1", "title": "beli paracetamol", "completed": False}]
+        )
+        planner2.shopping_service.list_items = AsyncMock(
+            return_value=[{"name": "telur", "checked": False}]
+        )
+        ctx_sem = CurrentContext(scene="apotek")
+        result_sem = await planner2.check(ctx_sem)
+        assert result_sem is not None and "paracetamol" in result_sem, result_sem
+
     asyncio.run(_run())
-    print("planner self-check OK: match, no-match, cooldown, unknown-person trigger")
+    print("planner self-check OK: keyword + semantic match, cooldown, unknown-person trigger")
 
 
 if __name__ == "__main__":  # pragma: no cover

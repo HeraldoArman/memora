@@ -14,6 +14,7 @@ import { getPublicEnv } from "@/lib/env";
 const DEVICE_TOPIC = "device";
 const DISPLAY_TOPIC = "display";
 const PROMPT_TOPIC = "prompt";
+const AGENT_LOG_TOPIC = "agent_log";
 
 export function DeviceHarness() {
   const [status, setStatus] = useState<Status>("disconnected");
@@ -109,6 +110,14 @@ export function DeviceHarness() {
           if (topic === DISPLAY_TOPIC) {
             setDisplay(text);
             log(`display ← "${text.slice(0, 80)}"`);
+          } else if (topic === AGENT_LOG_TOPIC) {
+            try {
+              const ev = JSON.parse(text) as { kind?: string; text?: string };
+              const kind = ev.kind ?? "log";
+              log(`[agent:${kind}] ${(ev.text ?? text).slice(0, 160)}`);
+            } catch {
+              log(`[agent] ${text.slice(0, 160)}`);
+            }
           } else {
             console.log("[DataReceived] topic mismatch — expected=", DISPLAY_TOPIC, "got=", topic);
           }

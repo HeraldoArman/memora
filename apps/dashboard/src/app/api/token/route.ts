@@ -8,7 +8,6 @@ import { getServerEnv } from "@/lib/env";
 // an agent dispatch). Add auth before exposing the dashboard publicly.
 
 const DEFAULT_IDENTITY = "dummy-device";
-const AGENT_NAME = "memora-agent";
 
 function uniqueRoom(): string {
   // memora-<timestamp>-<rand> — unique enough for local dev; collides are harmless
@@ -20,11 +19,13 @@ export async function POST(request: Request) {
   let serverUrl: string;
   let apiKey: string;
   let apiSecret: string;
+  let agentName: string;
   try {
     const env = getServerEnv();
     serverUrl = env.LIVEKIT_URL;
     apiKey = env.LIVEKIT_API_KEY;
     apiSecret = env.LIVEKIT_API_SECRET;
+    agentName = env.AGENT_NAME;
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "env invalid" },
@@ -60,9 +61,10 @@ export async function POST(request: Request) {
   const httpUrl = serverUrl.replace("wss://", "https://").replace("ws://", "http://");
   const api = new LiveKitAPI({ host: httpUrl, apiKey, secret: apiSecret });
   try {
-    await api.agentDispatch.createDispatch(roomName, AGENT_NAME);
+    const dispatch = await api.agentDispatch.createDispatch(roomName, agentName);
+    console.log("[token] agent dispatch created:", dispatch.id, "room:", roomName);
   } catch (err) {
-    console.error("[token] agent dispatch failed:", err);
+    console.error("[token] agent dispatch failed:", err instanceof Error ? err.message : err);
   }
 
   return NextResponse.json({ server_url: serverUrl, token, room_name: roomName, identity });

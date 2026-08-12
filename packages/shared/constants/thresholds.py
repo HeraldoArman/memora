@@ -1,6 +1,6 @@
 """Tunable thresholds + timing defaults.
 
-Face thresholds: face_recognition.md §10 (>0.80 known, 0.60–0.80 possible, <0.60 unknown).
+Face thresholds: face_recognition.md §10 (>0.50 known, 0.35–0.50 possible, <0.35 unknown).
 Timing: perception.md §11 (fusion 1s, observation TTL 5s, max context age 30s).
 These mirror the Settings defaults in packages/config/env/settings.py but live here as
 plain module constants for pure-Python use (shared has no settings dep).
@@ -9,8 +9,8 @@ plain module constants for pure-Python use (shared has no settings dep).
 from __future__ import annotations
 
 # Face identity — cosine similarity over L2-normalized 512-d embeddings.
-FACE_KNOWN_THRESHOLD = 0.80  # >= → confirmed/known person
-FACE_POSSIBLE_THRESHOLD = 0.60  # >= → possible match; below → unknown
+FACE_KNOWN_THRESHOLD = 0.50  # >= → confirmed/known person
+FACE_POSSIBLE_THRESHOLD = 0.35  # >= → possible match; below → unknown
 
 # Observation engine timing (milliseconds).
 FUSION_WINDOW_MS = 1000

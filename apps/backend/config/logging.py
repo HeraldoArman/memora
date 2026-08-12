@@ -8,7 +8,7 @@ line format so a prototype bug can be traced without guessing:
 
 - timestamps include milliseconds + UTC (glasses run on a headless box; local
   time is meaningless across devices)
-- logger name = module path (e.g. `reasoning.session.live_session`) so a log
+- logger name = module path (e.g. `reasoning.agent.agent`) so a log
   line immediately tells you which subsystem emitted it
 - function + line = jump straight to the call site
 - process/thread distinguishes the FastAPI uvicorn process from the
@@ -51,7 +51,8 @@ def setup_logging(*, level: str | None = None, log_file: str | None = None) -> N
     """Configure root logging once. Idempotent across uvicorn reload.
 
     level: default from Settings.log_level. log_file: optional rotating file
-    (e.g. /tmp/memora.log); stderr is always the primary sink.
+    (e.g. logs/backend.log); stderr is always the primary sink. Relative
+    paths resolve against the workspace root (parent of apps/).
     """
     settings = get_settings()
     level = (level or settings.log_level).upper()
@@ -66,7 +67,9 @@ def setup_logging(*, level: str | None = None, log_file: str | None = None) -> N
     root.addHandler(handler)
 
     if log_file:
-        path = Path(log_file)
+        # apps/backend/config/logging.py → 3 parents up = workspace root
+        root_dir = Path(__file__).resolve().parents[3]
+        path = root_dir / log_file if not Path(log_file).is_absolute() else Path(log_file)
         path.parent.mkdir(parents=True, exist_ok=True)
         fh = logging.handlers.RotatingFileHandler(
             path, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"

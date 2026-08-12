@@ -1,12 +1,14 @@
 """Unit tests — perception: observation engine fuse, working memory TTL, face tracker,
-frame sampler, speech forwarder, face recognizer (insightface mocked — no model download).
+frame sampler, face recognizer (insightface mocked — no model download).
+
+refactor/agent-session-gemini: SpeechForwarder deleted (AgentSession handles audio
+input). SpeechForwarder tests removed.
 """
 
 from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import numpy as np
 
@@ -21,7 +23,6 @@ from perception.face.recognizer import DetectedFace, FaceRecognizer
 from perception.face.tracker import FaceTracker, Track
 from perception.observation.engine import ObservationEngine, fuse
 from perception.observation.working_memory import WorkingMemory
-from perception.speech.forwarder import AUDIO_MIME, SpeechForwarder
 from perception.vision.sampler import FrameSampler, _encode_jpeg
 
 
@@ -68,7 +69,7 @@ class TestFuse:
         assert ctx.visible_people == ["Asep", "Orang tidak dikenali"]
 
     def test_possible_match_surfaced_as_maybe(self) -> None:
-        """FAISS possible match (0.60-0.80) surfaces as 'Mungkin <name>' not 'Orang tidak dikenali'."""
+        """FAISS possible match (0.35-0.50) surfaces as 'Mungkin <name>' not 'Orang tidak dikenali'."""
         ctx = fuse(
             [FaceObservation(person_id="p3", name="Budi", confidence=0.7, is_possible_match=True)]
         )
@@ -242,12 +243,19 @@ class TestFrameSampler:
         return _gen()
 
     async def test_yields_sampled_frames_high_fps(self) -> None:
-        s = FrameSampler(self._stream([self._frame(byte=1), self._frame(byte=2)]), fps=1000.0)
+        # Add small delays between frames so the monotonic clock advances past
+        # the interval (fps=1000 → interval=0.001s). Without the delay, both
+        # frames arrive at the same clock tick and the second is rate-limited.
+        async def _delayed_stream():
+            for f in [self._frame(byte=1), self._frame(byte=2)]:
+                yield SimpleNamespace(frame=f)
+                await asyncio.sleep(0.01)
+
+        s = FrameSampler(_delayed_stream(), fps=1000.0)
         frames = [f async for f in s.frames()]
         assert len(frames) == 2
         assert frames[0]["frame_no"] == 1 and frames[1]["frame_no"] == 2
         assert frames[0]["bgr"].shape == (2, 2, 3)
-        assert isinstance(frames[0]["jpeg"], bytes) and frames[0]["jpeg"]
 
     async def test_rate_limits_low_fps(self) -> None:
         s = FrameSampler(self._stream([self._frame(byte=1), self._frame(byte=2)]), fps=0.001)
@@ -261,26 +269,6 @@ class TestFrameSampler:
         jpg = _encode_jpeg(img)
         dec = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
         assert dec.shape == (64, 64, 3)
-
-
-class TestSpeechForwarder:
-    async def test_forward_blob(self) -> None:
-        live = SimpleNamespace(send_realtime_input=AsyncMock())
-        frame = SimpleNamespace(data=b"\x00\x01")
-        await SpeechForwarder(None, live).forward(frame)
-        live.send_realtime_input.assert_awaited_once()
-        blob = live.send_realtime_input.await_args.kwargs["audio"]
-        assert blob.mime_type == AUDIO_MIME and blob.data == b"\x00\x01"
-
-    async def test_run_forwards_all(self) -> None:
-        live = SimpleNamespace(send_realtime_input=AsyncMock())
-
-        async def _gen():
-            yield SimpleNamespace(data=b"\x00")
-            yield SimpleNamespace(data=b"\x01")
-
-        await SpeechForwarder(_gen(), live).run()
-        assert live.send_realtime_input.await_count == 2
 
 
 class TestFaceRecognizer:

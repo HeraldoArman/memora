@@ -6,6 +6,11 @@ tool_call events to these callables by name and returns their results via send_t
 
 ToolContext bundles the services + live session state the tools need. Ponytail: a single
 dataclass rather than passing services individually to every tool.
+
+refactor/bare-minimum: current_context (CurrentContext from WorkingMemory) is replaced
+with last_face — a simple dict written directly by the video loop. No observation engine,
+no working memory, no fusion window. Re-enable the observation pipeline by wiring
+current_context back and setting it from ObservationEngine.
 """
 
 from __future__ import annotations
@@ -42,8 +47,22 @@ class ToolContext:
     event_service: EventService = field(default_factory=EventService)
     shopping_service: ShoppingService = field(default_factory=ShoppingService)
 
-    # Live observation state (set by the gateway from Working Memory)
-    current_context: Any = None  # CurrentContext | None
+    # refactor/bare-minimum: direct face result from the video loop — no observation
+    # engine, no working memory, no 1s fusion window. The video loop writes:
+    #   {"embedding": np.ndarray, "person_id": str|None, "name": str|None,
+    #    "score": float, "is_known": bool, "is_possible": bool}
+    # Tools read from this dict directly. Re-enable observation engine by replacing
+    # this with current_context (CurrentContext from WorkingMemory).
+    last_face: dict | None = None
+
+    # Step 3: direct scene result from the video loop — SceneUnderstander writes:
+    #   {"location": str|None, "objects": list[str], "activity": str|None,
+    #    "confidence": float}
+    last_scene: dict | None = None
+
+    # Step 5: WorkingMemory holds the fused CurrentContext (30s TTL). When set,
+    # device_snapshot() and agent._get_context() prefer it over the raw dicts.
+    working_memory: Any = None  # WorkingMemory | None
 
     # FAISS FaceRepository — wired at RoomSession.create (worker process). When set, the
     # person_service is rebuilt with it so search_by_face / register_face resolve identity.
@@ -53,11 +72,10 @@ class ToolContext:
     # retroactively link orphan facts from this session to the newly-identified person.
     session_id: str | None = None
 
-    # ponytail: cache the last unknown-face embedding with a TTL. The current_context only
-    # holds the last 1s fusion window — if the person walks away mid "siapa ini?" exchange
-    # (slow dementia-patient response), the live embedding vanishes and register_face fails
-    # with "no face detected". The cache bridges that gap. Full PRD temporary-ID flow
-    # (face_recognition.md §11) is Phase 7; this is the minimal fix for the realistic edge.
+    # ponytail: cache the last unknown-face embedding with a TTL. The video loop
+    # updates last_face every frame, but if the person walks away mid "siapa ini?"
+    # exchange (slow dementia-patient response), last_face goes stale. The cache
+    # bridges that gap. Full PRD temporary-ID flow is Phase 7.
     _last_unknown_embedding: object = None
     _unknown_embedding_deadline: float = 0.0
     UNKNOWN_EMBEDDING_TTL_S: float = 60.0
@@ -67,33 +85,21 @@ class ToolContext:
             self.person_service = PersonService(face_repo=self.face_repo)
 
     def cache_unknown_embedding(self, embedding) -> None:
-        """Called by the video loop when an unknown face is detected — bridges the gap
-        between face detection and the 1s fusion window so register_face doesn't miss it.
-        """
+        """Called by the video loop when an unknown face is detected."""
         self._last_unknown_embedding = embedding
         self._unknown_embedding_deadline = time.monotonic() + self.UNKNOWN_EMBEDDING_TTL_S
 
     def current_face_embedding(self):
-        """Return the latest face embedding from the current context, or fall back to cache.
-
-        The recognizer stores the raw embedding on the FaceObservation; the context engine
-        keeps the latest. Ponytail: pull from the current context's observations directly
-        rather than a separate face cache. Unknown embeddings are cached with a TTL so
-        register_face still works after the person leaves frame (slow user response).
-        """
-        ctx = self.current_context
-        if ctx is not None:
-            for obs in reversed(getattr(ctx, "observations", [])):
-                emb = getattr(obs, "embedding", None)
-                if emb is not None:
-                    # Refresh cache if this is an unknown face — the one we'd register.
-                    if not getattr(obs, "is_known", False):
-                        self._last_unknown_embedding = emb
-                        self._unknown_embedding_deadline = (
-                            time.monotonic() + self.UNKNOWN_EMBEDDING_TTL_S
-                        )
-                    return emb
-        # No live face — use the cached unknown embedding if still fresh.
+        """Return the latest face embedding from last_face, or fall back to cache."""
+        if self.last_face is not None:
+            emb = self.last_face.get("embedding")
+            if emb is not None:
+                if not self.last_face.get("is_known", False):
+                    self._last_unknown_embedding = emb
+                    self._unknown_embedding_deadline = (
+                        time.monotonic() + self.UNKNOWN_EMBEDDING_TTL_S
+                    )
+                return emb
         if (
             self._last_unknown_embedding is not None
             and time.monotonic() < self._unknown_embedding_deadline
@@ -102,17 +108,19 @@ class ToolContext:
         return None
 
     def device_snapshot(self) -> dict:
-        """Pull device telemetry from the current context's latest DeviceObservation."""
-        ctx = self.current_context
-        if ctx is None:
-            return {}
-        for obs in reversed(getattr(ctx, "observations", [])):
-            if type(obs).__name__ == "DeviceObservation":
-                return {
-                    "battery_level": getattr(obs, "battery_level", None),
-                    "wifi_connected": getattr(obs, "wifi_connected", None),
-                    "button_pressed": getattr(obs, "button_pressed", False),
-                }
+        """Return device telemetry from WorkingMemory, or {} if unavailable."""
+        if self.working_memory is not None:
+            ctx = self.working_memory.get()
+            if ctx is not None:
+                from dto.observations import DeviceObservation
+
+                for obs in ctx.observations:
+                    if isinstance(obs, DeviceObservation):
+                        return {
+                            "battery_level": obs.battery_level,
+                            "wifi_connected": obs.wifi_connected,
+                            "button_pressed": obs.button_pressed,
+                        }
         return {}
 
 

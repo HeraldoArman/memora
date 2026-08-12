@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
+import numpy as np
+
 from dto.observations import CurrentContext
 from reasoning.planner.planner import ProactivePlanner, _keyword_overlap
 
@@ -222,4 +224,92 @@ class TestUnknownPersonTrigger:
         )
         ctx_reminder = CurrentContext(scene="paracetamol", visible_people=["Asep"])
         result = await planner.check(ctx_reminder)
+        assert result is not None and "paracetamol" in result
+
+
+class TestSemanticMatching:
+    """Do Soon #4: embedding similarity for location→item matching."""
+
+    class _FakeEmbedder:
+        async def embed_batch(self, texts):
+            vecs = {
+                "apotek": np.array([0.9, 0.1, 0.0], dtype=np.float32),
+                "beli paracetamol": np.array([0.85, 0.15, 0.0], dtype=np.float32),
+                "telur": np.array([0.0, 0.0, 1.0], dtype=np.float32),
+                "restoran": np.array([0.0, 0.9, 0.1], dtype=np.float32),
+                "makan siang": np.array([0.1, 0.85, 0.05], dtype=np.float32),
+            }
+            return [vecs.get(t, np.zeros(3, dtype=np.float32)) for t in texts]
+
+    def _planner_with_embedder(self, *, cooldown_s=100, clock=None):
+        class C:
+            t = 0.0
+
+        planner = ProactivePlanner(
+            reminder_service=AsyncMock(),
+            shopping_service=AsyncMock(),
+            cooldown_s=cooldown_s,
+            text_embedder=self._FakeEmbedder(),
+            _clock=clock or (lambda: C.t),
+        )
+        planner.reminder_service.upcoming = AsyncMock(return_value=[])
+        planner.shopping_service.list_items = AsyncMock(return_value=[])
+        return planner, C
+
+    async def test_semantic_match_no_keyword_overlap(self) -> None:
+        """apotek vs beli paracetamol — no keyword overlap, semantic match fires."""
+        planner, _ = self._planner_with_embedder()
+        planner.reminder_service.upcoming = AsyncMock(
+            return_value=[{"reminder_id": "r1", "title": "beli paracetamol", "completed": False}]
+        )
+        ctx = CurrentContext(scene="apotek")
+        result = await planner.check(ctx)
+        assert result is not None and "paracetamol" in result, result
+
+    async def test_semantic_no_match(self) -> None:
+        """apotek vs telur — both keyword and semantic miss."""
+        planner, _ = self._planner_with_embedder()
+        planner.shopping_service.list_items = AsyncMock(
+            return_value=[{"name": "telur", "checked": False}]
+        )
+        ctx = CurrentContext(scene="apotek")
+        result = await planner.check(ctx)
+        assert result is None, f"expected None: {result}"
+
+    async def test_keyword_takes_priority_over_semantic(self) -> None:
+        """When keyword matches, semantic pass is skipped."""
+        planner, C = self._planner_with_embedder(cooldown_s=100)
+        planner.reminder_service.upcoming = AsyncMock(
+            return_value=[
+                {"reminder_id": "r1", "title": "paracetamol", "completed": False},
+            ]
+        )
+        ctx = CurrentContext(scene="paracetamol")
+        result = await planner.check(ctx)
+        assert result is not None and "paracetamol" in result
+
+    async def test_no_embedder_keyword_only(self) -> None:
+        """Without text_embedder, only keyword matching works (backward compat)."""
+        planner, C = self._planner_with_embedder()
+        planner.text_embedder = None
+        planner.reminder_service.upcoming = AsyncMock(
+            return_value=[{"reminder_id": "r1", "title": "beli paracetamol", "completed": False}]
+        )
+        ctx = CurrentContext(scene="apotek")
+        assert await planner.check(ctx) is None
+
+    async def test_embedder_failure_falls_back(self) -> None:
+        """If embed_batch raises, semantic pass silently fails, keyword result stands."""
+        planner, _ = self._planner_with_embedder()
+
+        class _BoomEmbedder:
+            async def embed_batch(self, texts):
+                raise RuntimeError("API down")
+
+        planner.text_embedder = _BoomEmbedder()
+        planner.reminder_service.upcoming = AsyncMock(
+            return_value=[{"reminder_id": "r1", "title": "paracetamol", "completed": False}]
+        )
+        ctx = CurrentContext(scene="paracetamol")
+        result = await planner.check(ctx)
         assert result is not None and "paracetamol" in result

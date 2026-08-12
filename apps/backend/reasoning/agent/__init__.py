@@ -1,3 +1,3 @@
-from reasoning.agent.agent import ReasoningAgent
+from reasoning.agent.agent import MemoraAgent
 
-__all__ = ["ReasoningAgent"]
+__all__ = ["MemoraAgent"]

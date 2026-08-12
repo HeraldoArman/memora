@@ -15,12 +15,51 @@ log = logging.getLogger(__name__)
 
 
 async def search_person(args: dict, ctx: ToolContext) -> dict:
-    """Search any entity by name substring (graph)."""
+    """Search any entity by name substring (graph).
+
+    If there's an unknown face currently visible and we find a Person match,
+    auto-register the face to that person_id — so the agent doesn't need a
+    separate register_face call when the person already exists in the graph.
+    """
     query = args.get("query", "")
     if not query:
         return {"error": "query required"}
     hits = await ctx.person_service.search_by_name(query)
+    # ponytail: auto-enroll face if there's an unknown face visible and we found
+    # exactly one Person match. Saves a round-trip — the agent often forgets to
+    # call register_face when the person "already exists" in the graph.
+    person_hits = [h for h in hits if h.get("labels") and "Person" in h.get("labels", [])]
+    if len(person_hits) == 1:
+        emb = ctx.current_face_embedding()
+        if emb is not None:
+            pid = person_hits[0].get("person_id")
+            if pid:
+                try:
+                    await ctx.person_service.register_face(emb, pid)
+                    log.info("auto-registered face for %s during search_person", pid)
+                    try:
+                        from postgres.repositories import FaceEmbeddingRepo
+                        from postgres.session import get_sessionmaker
+
+                        async with get_sessionmaker()() as db:
+                            await FaceEmbeddingRepo().save(db, person_id=pid, embedding=emb)
+                        log.info("auto-registered face persisted to DB for %s", pid)
+                    except Exception:  # noqa: BLE001
+                        log.exception("auto-register face DB persist failed for %s", pid)
+                except RuntimeError:
+                    pass  # face_repo not wired
     return {"results": hits}
+
+
+async def get_person(args: dict, ctx: ToolContext) -> dict:
+    """Get a person's full profile: name, notes, and relationships (LIKES, WORKS_AT, etc.)."""
+    person_id = args.get("person_id")
+    if not person_id:
+        return {"error": "person_id required"}
+    person = await ctx.person_service.get_person(person_id)
+    if person is None:
+        return {"error": "person not found"}
+    return {"person": person}
 
 
 async def search_person_by_face(args: dict, ctx: ToolContext) -> dict:
@@ -85,11 +124,14 @@ async def register_face(args: dict, ctx: ToolContext) -> dict:
         from postgres.repositories import FaceEmbeddingRepo
         from postgres.session import get_sessionmaker
 
+        log.info("persisting face embedding for %s (emb shape=%s)", person_id, emb.shape)
         async with get_sessionmaker()() as db:
             await FaceEmbeddingRepo().save(db, person_id=person_id, embedding=emb)
+        log.info("face embedding persisted to DB for %s", person_id)
     except Exception:  # noqa: BLE001 — DB unavailable shouldn't block enrollment
-        log.warning("face embedding persist to DB failed for %s", person_id)
-    return {"person_id": person_id, "enrolled": True, "face_index_row": row}
+        log.exception("face embedding persist to DB failed for %s", person_id)
+        return {"person_id": person_id, "enrolled": True, "face_index_row": row, "persisted": False}
+    return {"person_id": person_id, "enrolled": True, "face_index_row": row, "persisted": True}
 
 
 async def update_person(args: dict, ctx: ToolContext) -> dict:
@@ -107,6 +149,7 @@ async def update_person(args: dict, ctx: ToolContext) -> dict:
 # name → callable, for the registry.
 PERSON_TOOL_FUNCS = {
     "search_person": search_person,
+    "get_person": get_person,
     "search_person_by_face": search_person_by_face,
     "register_person": register_person,
     "register_face": register_face,

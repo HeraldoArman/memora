@@ -21,7 +21,7 @@ class TestSettingsValidation:
         ):
             monkeypatch.delenv(key, raising=False)
         with pytest.raises(ValidationError):
-            Settings()
+            Settings(_env_file=None)  # bypass .env so only env vars are consulted
 
     def test_required_fields_present(self, monkeypatch) -> None:
         monkeypatch.setenv("LIVEKIT_URL", "wss://x")
@@ -46,18 +46,34 @@ class TestSettingsValidation:
 
 
 class TestSettingsDefaults:
-    def test_defaults(self, settings) -> None:
-        assert settings.face_embedding_dim == 512
-        assert settings.face_match_threshold == 0.80
-        assert settings.face_possible_match_threshold == 0.60
-        assert settings.observation_fusion_window_ms == 1000
-        assert settings.observation_ttl_ms == 5000
-        assert settings.max_context_age_ms == 30000
-        assert settings.frame_sample_fps == 1.0
-        assert settings.gemini_audio_output_sample_rate == 24000
-        assert settings.gemini_audio_output_channels == 1
-        assert settings.gemini_live_model == "gemini-2.0-flash-exp"
-        assert settings.port == 8000 and settings.log_level == "INFO"
+    def test_defaults(self, monkeypatch) -> None:
+        # Bypass .env so the code defaults are tested, not local overrides.
+        for key in (
+            "LIVEKIT_URL",
+            "LIVEKIT_API_KEY",
+            "LIVEKIT_API_SECRET",
+            "GEMINI_API_KEY",
+            "DATABASE_URL",
+            "NEO4J_URI",
+            "NEO4J_USER",
+            "NEO4J_PASSWORD",
+        ):
+            monkeypatch.setenv(key, "x")
+        monkeypatch.delenv("GEMINI_LIVE_MODEL", raising=False)
+        monkeypatch.delenv("GEMINI_TEXT_MODEL", raising=False)
+        s = Settings(_env_file=None)
+        assert s.face_embedding_dim == 512
+        assert s.face_match_threshold == 0.50
+        assert s.face_possible_match_threshold == 0.35
+        assert s.observation_fusion_window_ms == 1000
+        assert s.observation_ttl_ms == 5000
+        assert s.max_context_age_ms == 30000
+        assert s.frame_sample_fps == 0.5
+        assert s.gemini_audio_output_sample_rate == 24000
+        assert s.gemini_audio_output_channels == 1
+        assert s.gemini_live_model == "gemini-2.5-flash-native-audio-preview-12-2025"
+        assert s.gemini_text_model == "gemini-2.5-flash"
+        assert s.port == 8000 and s.log_level == "INFO"
 
     def test_get_settings_cached(self, settings) -> None:
         assert get_settings() is settings

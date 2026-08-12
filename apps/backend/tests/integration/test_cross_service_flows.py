@@ -533,12 +533,12 @@ class TestFaceReRecognitionFlow:
         pid, name = _name("pid"), _name("Asep")
         await svc.register_person(name=name, person_id=pid)
         await svc.register_face(_vec(0), pid)
-        # 0.7 cosine similarity — above possible (0.60), below known (0.80)
-        # After L2 normalization the first component must be 0.7, so the second
-        # is sqrt(1 - 0.7^2) = sqrt(0.51) ≈ 0.714.
+        # 0.42 cosine similarity — above possible (0.35), below known (0.50)
+        # After L2 normalization the first component must be 0.42, so the second
+        # is sqrt(1 - 0.42^2) = sqrt(0.8236) ≈ 0.9075.
         partial = np.zeros(512, dtype=np.float32)
-        partial[0] = 0.7
-        partial[1] = float(np.sqrt(1 - 0.7**2))
+        partial[0] = 0.42
+        partial[1] = float(np.sqrt(1 - 0.42**2))
         out = await svc.search_by_face(partial)
         assert out["known"] is False
         assert out["possible"] is True
@@ -557,8 +557,8 @@ class TestFaceReRecognitionFlow:
         await svc.register_face(_vec(0), pid)
         # Agent confirmed possible match → re-enroll the new angle
         partial = np.zeros(512, dtype=np.float32)
-        partial[0] = 0.7
-        partial[1] = float(np.sqrt(1 - 0.7**2))
+        partial[0] = 0.42
+        partial[1] = float(np.sqrt(1 - 0.42**2))
         await svc.register_face(partial, pid)
         # Now lookup with the partial vector → should hit the exact enrolled copy
         out = await svc.search_by_face(partial)
