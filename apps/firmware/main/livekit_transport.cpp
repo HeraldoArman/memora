@@ -174,11 +174,7 @@ bool connect() {
     }
 
     livekit_room_options_t options = {};
-    options.publish.kind = LIVEKIT_MEDIA_TYPE_BOTH;
-    options.publish.video_encode.codec = LIVEKIT_VIDEO_CODEC_H264;
-    options.publish.video_encode.width = 320;
-    options.publish.video_encode.height = 240;
-    options.publish.video_encode.fps = 1;
+    options.publish.kind = LIVEKIT_MEDIA_TYPE_AUDIO;
     options.publish.audio_encode.codec = LIVEKIT_AUDIO_CODEC_OPUS;
     options.publish.audio_encode.sample_rate = 16000;
     options.publish.audio_encode.channel_count = 1;
@@ -198,10 +194,9 @@ bool connect() {
         ESP_LOGE(kTag, "room connect failed: %d", result);
         return false;
     }
-    ESP_LOGI(kTag, "connecting as %s to room %s with camera=%dx%d@%dfps mic=%uHz mono",
+    ESP_LOGI(kTag, "connecting as %s to room %s with mic=%uHz mono (video via JPEG bridge)",
              CONFIG_MEMORA_LIVEKIT_IDENTITY, CONFIG_MEMORA_LIVEKIT_ROOM,
-             options.publish.video_encode.width, options.publish.video_encode.height,
-             options.publish.video_encode.fps, options.publish.audio_encode.sample_rate);
+             options.publish.audio_encode.sample_rate);
     xTaskCreate(telemetry_task, "telemetry", 3072, nullptr, 4, nullptr);
     return true;
 }

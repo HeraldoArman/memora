@@ -292,7 +292,7 @@ export function H264Debugger() {
         </section>
 
         <footer className="mt-8 flex flex-col gap-2 border-t border-[#343731] pt-5 font-mono text-[10px] uppercase tracking-[0.16em] text-[#727a6e] sm:flex-row sm:justify-between">
-          <span>source: memora-device / codec: H.264 / transport: WebRTC</span>
+          <span>source: video-bridge / codec: H.264 / transport: WebRTC</span>
           <span>diagnostic view · no local capture</span>
         </footer>
       </div>

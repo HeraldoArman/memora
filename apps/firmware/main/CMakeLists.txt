@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.cpp"
         "media.cpp"
+        "jpeg_ingest.cpp"
         "network.cpp"
         "display.cpp"
         "button.cpp"
@@ -10,6 +11,7 @@ idf_component_register(
     INCLUDE_DIRS "."
     REQUIRES
         driver
+        esp_camera
         esp_capture
         esp_event
         esp_http_client
@@ -20,7 +22,6 @@ idf_component_register(
         livekit
     PRIV_REQUIRES
         esp_audio_codec
-        esp_video_codec
 )
 
 # IDF 5.5's I2S and esp32-camera components can leave GDMA references for the
