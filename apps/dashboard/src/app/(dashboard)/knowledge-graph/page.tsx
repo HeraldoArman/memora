@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { forceX, forceY } from "d3-force";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type GraphData } from "@/lib/api";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -28,7 +29,10 @@ export default function GraphPage() {
   );
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const fgRef = useRef<any>(null);
   const [dims, setDims] = useState({ w: 800, h: 600 });
+  const GRAPH_W = Math.min(dims.w, 960);
+  const GRAPH_H = dims.h;
 
   useEffect(() => {
     api
@@ -68,6 +72,31 @@ export default function GraphPage() {
     return { nodes: Array.from(nodeMap.values()), links };
   }, [data]);
 
+  // Cap graph width at 960 so forceX/Y center is tight (full-width viewport made
+  // orphan nodes scatter across a huge area). Weaken charge so 190 orphan nodes
+  // don't fly apart, and strengthen center pull to overpower charge.
+  useEffect(() => {
+    const fg = fgRef.current;
+    if (!fg) return;
+
+    // Match the basic D3 force model from the reference.
+    fg.d3Force("link");
+    fg.d3Force("charge");
+    fg.d3Force("x", forceX());
+    fg.d3Force("y", forceY());
+
+    // No collision force.
+    fg.d3Force("collide", null);
+  }, [graphData]);
+
+  // Reheat only when new data arrives (fresh layout), never on resize — re-arming
+  // the sim on every ResizeObserver tick is what made a static node-hold push the
+  // rest of the graph away (dragstart pins a node, an alive charge force shoves
+  // others to a new equilibrium).
+  useEffect(() => {
+    fgRef.current?.d3ReheatSimulation();
+  }, [graphData]);
+
   const nodeTypeCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     graphData.nodes.forEach((n) => {
@@ -89,7 +118,7 @@ export default function GraphPage() {
         {/* Graph canvas */}
         <div
           ref={containerRef}
-          className="relative flex-1 overflow-hidden rounded-xl border border-accent-500/20 bg-gradient-to-br from-accent-500/5 to-ink-900"
+          className="relative flex flex-1 items-center justify-center overflow-hidden rounded-xl border border-accent-500/20 bg-gradient-to-br from-accent-500/5 to-ink-900"
         >
           {error ? (
             <div className="flex h-full items-center justify-center">
@@ -105,18 +134,21 @@ export default function GraphPage() {
             </div>
           ) : (
             <ForceGraph2D
+              ref={fgRef}
               graphData={graphData}
-              width={dims.w}
-              height={dims.h}
+              width={GRAPH_W}
+              height={GRAPH_H}
               nodeLabel="label"
               nodeColor={(node: any) => NODE_COLORS[node.type] ?? "#9aa0ae"}
-              nodeRelSize={5}
+              nodeRelSize={10}
               linkLabel="label"
               linkColor={() => "#c9cefc"}
-              linkDirectionalArrowLength={4}
+              linkWidth={5}
+
+              linkDirectionalArrowLength={10}
               linkDirectionalArrowRelPos={1}
               onNodeClick={(node: any) => setSelected(node)}
-              cooldownTicks={100}
+              cooldownTicks={1000}
             />
           )}
         </div>
@@ -168,16 +200,27 @@ export default function GraphPage() {
                   </p>
                   <ul className="space-y-1">
                     {graphData.links
-                      .filter((l: any) => l.source === selected.id || l.target === selected.id)
-                      .map((l: any) => (
-                        <li
-                          key={l.id}
-                          className="rounded bg-ink-800 px-2 py-1 font-mono text-xs text-neutral-600"
-                        >
-                          {l.source === selected.id ? "→" : "←"} {l.label}{" "}
-                          {l.source === selected.id ? l.target : l.source}
-                        </li>
-                      ))}
+                      .filter((l: any) => {
+                        // d3-force resolves link source/target to node objects
+                        // after the simulation runs, so compare via .id (string both
+                        // before + after resolution).
+                        const s = typeof l.source === "object" ? l.source.id : l.source;
+                        const t = typeof l.target === "object" ? l.target.id : l.target;
+                        return s === selected.id || t === selected.id;
+                      })
+                      .map((l: any) => {
+                        const s = typeof l.source === "object" ? l.source.id : l.source;
+                        const t = typeof l.target === "object" ? l.target.id : l.target;
+                        const outgoing = s === selected.id;
+                        return (
+                          <li
+                            key={l.id}
+                            className="rounded bg-ink-800 px-2 py-1 font-mono text-xs text-neutral-600"
+                          >
+                            {outgoing ? "→" : "←"} {l.label} {outgoing ? t : s}
+                          </li>
+                        );
+                      })}
                   </ul>
                 </div>
               </CardBody>

@@ -297,6 +297,11 @@ async def entrypoint(ctx: JobContext) -> None:
                 "prompt received: %r — generating reply via session.generate_reply", text[:200]
             )
             asyncio.create_task(agent_log.emit("user", f"[prompt] {text}"))
+            # Fire extraction so prompt turns persist like spoken turns: graph edges,
+            # memory_facts, and the episodic user message. generate_reply fires the
+            # assistant reply + display but creates no user-role conversation_item_added,
+            # so without this the prompt path skips the whole extraction pipeline.
+            asyncio.create_task(_on_extract(text, session_id))
             try:
                 session.generate_reply(instructions=text)
             except RuntimeError:
