@@ -97,6 +97,17 @@ class KnowledgeGraphRepo:
             )
             return [dict(r) for r in result]
 
+    async def full_graph(self) -> dict:
+        """Return every node + edge in the graph. Used by the dashboard viz."""
+        async with neo4j_client.get_driver().session() as s:
+            result = await s.execute_read(_run_read_tx, cypher=queries.FULL_GRAPH)
+            if not result:
+                return {"nodes": [], "edges": []}
+            rec = dict(result[0])
+            # Filter out null edges (from OPTIONAL MATCH on isolated nodes)
+            rec["edges"] = [e for e in rec.get("edges", []) if e.get("type") is not None]
+            return rec
+
 
 # --- tx functions (run inside driver sessions) ---
 

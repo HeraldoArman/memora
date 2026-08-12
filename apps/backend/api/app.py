@@ -9,8 +9,10 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import health
+from api.routes.dashboard import router as dashboard_router
 from config.lifespan import lifespan
 from config.logging import setup_logging
 
@@ -30,5 +32,15 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # ponytail: open CORS for the local Next.js dashboard. Restrict origins
+    # before deploying publicly.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET"],
+        allow_headers=["*"],
+    )
+
     app.include_router(health.router)
+    app.include_router(dashboard_router)
     return app
