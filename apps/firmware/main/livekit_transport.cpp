@@ -170,7 +170,7 @@ bool connect() {
     options.publish.video_encode.codec = LIVEKIT_VIDEO_CODEC_H264;
     options.publish.video_encode.width = 320;
     options.publish.video_encode.height = 240;
-    options.publish.video_encode.fps = 5;
+    options.publish.video_encode.fps = 1;
     options.publish.audio_encode.codec = LIVEKIT_AUDIO_CODEC_OPUS;
     options.publish.audio_encode.sample_rate = 16000;
     options.publish.audio_encode.channel_count = 1;

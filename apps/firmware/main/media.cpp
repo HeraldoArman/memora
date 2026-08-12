@@ -10,6 +10,8 @@
 #include "esp_log.h"
 #include "esp_capture.h"
 #include "esp_capture_types.h"
+#include "esp_audio_enc_default.h"
+#include "esp_video_enc_default.h"
 #include "impl/esp_capture_video_dvp_src.h"
 #include "freertos/FreeRTOS.h"
 
@@ -215,6 +217,20 @@ bool init_microphone() {
 namespace memora::media {
 
 bool init() {
+    const auto audio_encoder_result = esp_audio_enc_register_default();
+    if (audio_encoder_result != 0) {
+        ESP_LOGE(kTag, "audio encoder registration failed: %d",
+                 static_cast<int>(audio_encoder_result));
+        return false;
+    }
+    const auto video_encoder_result = esp_video_enc_register_default();
+    if (video_encoder_result != 0) {
+        ESP_LOGE(kTag, "video encoder registration failed: %d",
+                 static_cast<int>(video_encoder_result));
+        return false;
+    }
+    ESP_LOGI(kTag, "default H264 and Opus encoders registered");
+
     if (!init_camera_sccb_bus() || !init_microphone()) {
         return false;
     }
