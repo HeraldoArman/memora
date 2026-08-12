@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     # === Gemini (required) ===
     gemini_api_key: str
-    gemini_live_model: str = "gemini-2.0-flash-exp"
+    gemini_live_model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
     gemini_text_model: str = "gemini-2.5-flash"
 
     # === Postgres (required) ===

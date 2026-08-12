@@ -90,7 +90,7 @@ The implementation follows the proposal's three-layer architecture (Perception �
 
 **Better approach?** The proposal's fully event-driven approach is more efficient (fewer API calls) but harder to implement reliably. The implementation's VAD-based turn detection is simpler and sufficient for the MVP. Scene-change-triggered reasoning could be added later by having the ObservationEngine emit events that trigger `generate_reply` — but this risks over-talking. The current approach (agent only speaks when spoken to, except for proactive planner triggers) is safer for a dementia patient who might be confused by unprompted commentary.
 
-**Update (2026-08-12):** Periodic context refresh now implemented — `update_instructions()` is called every 5 user turns from `conversation_item_added`, keeping the system prompt's `{{context_package}}` section fresh as the conversation progresses.
+**Update (2026-08-12):** Periodic context refresh implemented — context is folded into the `generate_reply()` instructions on `on_enter()`. Mid-session `update_instructions()` is intentionally NOT called because the Gemini Live API corrupts the audio stream when `send_client_content(turn_complete=False)` is sent mid-session (confirmed via live testing — error: `CONTENT_TYPE_AUDIO not supported for this model configuration`). `_refresh_context()` builds context + logs it but does not push it to the model. Mid-conversation context updates rely on tool calls.
 
 ---
 
@@ -148,9 +148,9 @@ The implementation follows the proposal's three-layer architecture (Perception �
 
 **Status: ✅ Fully implemented.** ~~One gap: context is only built on `on_enter()` (session start), not on every turn. The PRD (context.md §5) describes "event-driven" context refresh. Currently the agent relies on tool calls for mid-conversation context updates, not automatic context refreshes.~~
 
-**Update (2026-08-12):** Context is now refreshed every 5 user turns via `update_instructions()`, keeping the system prompt fresh.
+**Update (2026-08-12):** Context is now folded into the `generate_reply()` instructions on `on_enter()` instead of calling `update_instructions()` separately. This is because the Gemini Live API corrupts the audio stream when `send_client_content(turn_complete=False)` is sent mid-session. `_refresh_context()` builds context but does not push it to the model — mid-conversation context updates rely on tool calls.
 
-**Trade-off:** Building context on every turn would be more accurate but adds latency (Gemini API call for summarization). The current approach (build every 5 turns + tool calls) is a good balance — fresh enough for context drift, not so frequent as to add noticeable latency.
+**Should we switch?** ~~Add periodic context refreshes~~ Done. The `update_instructions()` limitation is a Gemini Live API constraint, not a design choice. If the API later supports mid-session instruction updates, `_refresh_context` can be extended to call `update_instructions()` at that point.
 
 ---
 
@@ -268,16 +268,16 @@ The implementation follows the proposal's three-layer architecture (Perception �
 | Summarization      | Compress when over context window                                                  | `Summarizer` (Gemini) compresses                  |
 | Packaging          | Structured YAML-like format                                                        | `ContextPackage` dataclass + `to_text()` renderer |
 | Provenance         | Memory ID, source, confidence, timestamp, entities                                 | `provenance` field in `ContextPackage`            |
-| Refresh frequency  | Event-driven (new person, question, context change)                                | On `on_enter()` only (session start)              |
+| Refresh frequency  | Event-driven (new person, question, context change)                                | On `on_enter()` (folded into greeting)            |
 | Token optimization | Explicit strategies (dedup, aggregation, compression)                              | `Summarizer` + `top_k` limit                      |
 
 **Which is better?** The implementation is close to the PRD but has one gap:
 
-- ~~**Context refresh frequency:** The PRD says event-driven. The implementation builds context once on `on_enter()`. Mid-conversation context updates rely on tool calls (`search_person`, `current_scene`, etc.) rather than automatic context refreshes. This is simpler but means the system prompt's `{{context_package}}` section becomes stale as the conversation progresses.~~
+- ~~**Context refresh frequency:** The PRD says event-driven. The implementation builds context once on `on_enter()`.~~
 
-**Update (2026-08-12):** Context is now refreshed every 5 user turns via `MemoraAgent._refresh_context()` → `update_instructions()`. The system prompt stays fresh as new faces/scenes are detected and new memories are extracted during conversation.
+**Update (2026-08-12):** Context is now folded into the `generate_reply()` greeting on `on_enter()`. Mid-session `update_instructions()` is intentionally NOT called — the Gemini Live API corrupts the audio stream when `send_client_content(turn_complete=False)` is sent mid-session (confirmed via live testing: `CONTENT_TYPE_AUDIO not supported for this model configuration`). `_refresh_context()` builds context + logs it but does not push to the model. Mid-conversation context updates rely on tool calls.
 
-**Should we switch?** ~~Add periodic context refreshes (e.g., rebuild on every 5th turn or when a new person is detected). This is a small change — call `update_instructions()` from a new event handler. Not urgent for the MVP.~~ Done.
+**Should we switch?** ~~Add periodic context refreshes~~ Done. The `update_instructions()` limitation is a Gemini Live API constraint. If the API later supports mid-session instruction updates, `_refresh_context` can be extended to call `update_instructions()`.
 
 ---
 
@@ -305,7 +305,7 @@ The implementation follows the proposal's three-layer architecture (Perception �
 
 | Feature                                | PRD Section            | Status                    |
 | -------------------------------------- | ---------------------- | ------------------------- |
-| Event-driven context refresh           | context.md §5          | ✅ (every 5 user turns)   |
+| Event-driven context refresh           | context.md §5          | ✅ (folded into greeting) |
 | Heartbeat monitoring for session       | reasoning_agent.md §5  | ❌ (handled by framework) |
 | Queue pending user requests on failure | reasoning_agent.md §13 | ❌                        |
 | Memory confidence learning             | memory_os.md §17       | ❌                        |
@@ -337,7 +337,7 @@ The memory pipeline (extraction → consolidation → graph + episodic storage) 
 
 ### Do Soon (product gaps):
 
-3. ~~**Add periodic context refresh**~~ — ✅ Done (2026-08-12). `MemoraAgent._refresh_context()` rebuilds context + calls `update_instructions()` every 5 user turns, triggered from `conversation_item_added`.
+3. ~~**Add periodic context refresh**~~ — ✅ Done (2026-08-12). Context folded into `generate_reply()` on `on_enter()`. Mid-session `update_instructions()` intentionally skipped — Gemini Live API corrupts audio stream on `send_client_content(turn_complete=False)` (confirmed via live testing).
 4. ~~**Improve proactive planner matching**~~ — ✅ Done (2026-08-12). Added `text_embedder` to `ProactivePlanner`. Keyword pass first (free), then batch embedding similarity (one API call per 30s cycle, threshold 0.5) for unmatched items. Fixes "apotek vs beli paracetamol" gap.
 
 ### Do Later (scale + polish):

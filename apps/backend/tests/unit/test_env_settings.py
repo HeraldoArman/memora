@@ -71,7 +71,7 @@ class TestSettingsDefaults:
         assert s.frame_sample_fps == 0.5
         assert s.gemini_audio_output_sample_rate == 24000
         assert s.gemini_audio_output_channels == 1
-        assert s.gemini_live_model == "gemini-2.0-flash-exp"
+        assert s.gemini_live_model == "gemini-2.5-flash-native-audio-preview-12-2025"
         assert s.gemini_text_model == "gemini-2.5-flash"
         assert s.port == 8000 and s.log_level == "INFO"
 

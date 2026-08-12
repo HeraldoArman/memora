@@ -4,9 +4,9 @@ Replaces the custom GeminiLiveSession + ReasoningAgent + ToolRouter with a
 single Agent class. Audio, video, reconnection, VAD-based turn detection, and
 audio output are handled by AgentSession + RealtimeModel — no custom plumbing.
 
-Tools are auto-generated from ALL_FUNCTION_DECLARATIONS via raw_schema, so
-every declared tool gets a @function_tool wrapper that dispatches to the
-existing registry callable. No per-tool boilerplate.
+    Tools are auto-generated from ALL_FUNCTION_DECLARATIONS via raw_schema, so
+    every declared tool gets a @function_tool wrapper that dispatches to the
+    existing registry callable. No per-tool boilerplate.
 """
 
 from __future__ import annotations
@@ -16,9 +16,9 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from livekit.agents import Agent, RunContext, function_tool
+from livekit.plugins import google
 
 from prompts import SYSTEM_INSTRUCTION
-from reasoning.prompts.system import build_system_instruction
 from tools import ToolContext, build_registry
 
 log = logging.getLogger(__name__)
@@ -42,16 +42,46 @@ class MemoraAgent(Agent):
         context_engine: Any = None,
         planner: Any = None,
         on_log: Callable[[str, str], Awaitable[None]] | None = None,
+        llm: google.realtime.RealtimeModel | None = None,
     ) -> None:
-        super().__init__(instructions=SYSTEM_INSTRUCTION)
+        if llm is None:
+            from env import get_settings
+
+            settings = get_settings()
+            llm = google.realtime.RealtimeModel(
+                model=settings.gemini_live_model,
+                voice="Puck",
+                api_key=settings.gemini_api_key,
+            )
+
+        # Set instance attrs BEFORE super().__init__ so _dispatch closures capture self
+        # with tool_ctx already wired. Tools are built from ALL_FUNCTION_DECLARATIONS
+        # and passed to super via tools=.
         self._tool_ctx = tool_ctx
         self._on_extract = on_extract
         self._context_engine = context_engine
         self._planner = planner
         self._on_log = on_log
+
+        from schemas import ALL_FUNCTION_DECLARATIONS
+
+        tools = []
+        for decl in ALL_FUNCTION_DECLARATIONS:
+            name = decl["name"]
+            handler = self._dispatch(name)
+            schema = {
+                "name": name,
+                "description": decl.get("description", ""),
+                "parameters": decl.get("parameters", {"type": "object", "properties": {}}),
+            }
+            tools.append(function_tool(handler, raw_schema=schema))
+
+        instructions = SYSTEM_INSTRUCTION.replace("{{context_package}}", "(belum ada konteks)")
+        super().__init__(instructions=instructions, llm=llm, tools=tools)
         log.info(
-            "MemoraAgent constructed: instructions=%d chars, tool_ctx=%s, on_extract=%s, context_engine=%s, planner=%s",
-            len(SYSTEM_INSTRUCTION),
+            "MemoraAgent constructed: instructions=%d chars, tools=%d, tool_ctx=%s, on_extract=%s, context_engine=%s, planner=%s",
+            len(instructions),
+            len(tools),
             "wired" if tool_ctx else "None",
             "wired" if on_extract else "None",
             "wired" if context_engine else "None",
@@ -59,24 +89,26 @@ class MemoraAgent(Agent):
         )
 
     async def on_enter(self) -> None:
-        """Called when agent becomes active. Inject known memories, then greet."""
+        """Called when agent becomes active. Build context, fold into greeting."""
         log.info("on_enter: agent becoming active")
+        greeting = "Sapa pengguna dengan singkat dalam Bahasa Indonesia."
         if self._context_engine is not None:
             try:
                 text = await self._build_context_text()
                 if text and text != "(belum ada konteks)":
-                    instructions = build_system_instruction(text)
-                    log.info("on_enter: update_instructions with %d chars context", len(text))
-                    await self.update_instructions(instructions)
+                    # ponytail: fold context into generate_reply instructions instead of
+                    # calling update_instructions() separately. The Gemini Live API rejects
+                    # send_client_content(turn_complete=False) mid-session — it corrupts
+                    # the audio stream. generate_reply sends turn_complete=True which is safe.
+                    greeting = f"Konteks: {text}\n\n{greeting}"
+                    log.info("on_enter: context folded into greeting (%d chars)", len(text))
                 else:
                     log.info("on_enter: context empty, keeping static instructions")
             except Exception:  # noqa: BLE001
                 log.warning(
                     "on_enter: context build failed, keeping static instructions", exc_info=True
                 )
-        await self.session.generate_reply(
-            instructions="Sapa pengguna dengan singkat dalam Bahasa Indonesia."
-        )
+        await self.session.generate_reply(instructions=greeting)
         log.info("on_enter: greeting generated")
 
         if self._planner is not None:
@@ -84,21 +116,26 @@ class MemoraAgent(Agent):
             log.info("on_enter: proactive planner started")
 
     async def _refresh_context(self) -> None:
-        """Rebuild context + update_instructions mid-session (event-driven refresh).
+        """Rebuild context mid-session (event-driven refresh).
 
-        Called periodically from entrypoint (every N user turns) so the system
-        prompt stays fresh as the conversation progresses.
+        ponytail: Gemini Live API corrupts the audio stream when update_instructions()
+        is called mid-session (send_client_content with turn_complete=False). So we
+        skip the mid-session instruction update. The context from on_enter's
+        generate_reply persists in the conversation history. Mid-conversation context
+        updates rely on tool calls (search_person, current_scene, etc.) instead.
         """
         if self._context_engine is None:
             return
         try:
             text = await self._build_context_text()
             if text and text != "(belum ada konteks)":
-                instructions = build_system_instruction(text)
-                log.info("refresh_context: update_instructions with %d chars", len(text))
-                await self.update_instructions(instructions)
+                log.info(
+                    "refresh_context: context built (%d chars) — skipping update_instructions"
+                    " (Gemini Live API corrupts audio stream on mid-session send_client_content)",
+                    len(text),
+                )
         except Exception:  # noqa: BLE001
-            log.warning("refresh_context failed, keeping existing instructions", exc_info=True)
+            log.warning("refresh_context failed", exc_info=True)
 
     async def _build_context_text(self) -> str:
         """Build context text from ContextEngine using current tool_ctx state."""
@@ -194,49 +231,19 @@ class MemoraAgent(Agent):
         return _handler
 
 
-def _build_tools(tool_ctx: ToolContext, on_extract=None, context_engine=None, planner=None) -> list:
-    """Auto-generate @function_tool wrappers from ALL_FUNCTION_DECLARATIONS.
-
-    Each declared tool gets a raw_schema function_tool that dispatches to the
-    existing registry callable. This avoids writing 31 wrapper methods by hand.
-    """
-    from schemas import ALL_FUNCTION_DECLARATIONS
-
-    log.info(
-        "building tools from ALL_FUNCTION_DECLARATIONS: %d declarations",
-        len(ALL_FUNCTION_DECLARATIONS),
-    )
-    agent = MemoraAgent(
-        tool_ctx=tool_ctx, on_extract=on_extract, context_engine=context_engine, planner=planner
-    )
-    tools = []
-    for decl in ALL_FUNCTION_DECLARATIONS:
-        name = decl["name"]
-        handler = agent._dispatch(name)
-
-        schema = {
-            "name": name,
-            "description": decl.get("description", ""),
-            "parameters": decl.get("parameters", {"type": "object", "properties": {}}),
-        }
-        tool = function_tool(handler, raw_schema=schema)
-        tools.append(tool)
-
-    log.info("built %d @function_tool wrappers", len(tools))
-    return tools
-
-
 # --- self-check: tool count matches declarations ---
 def _self_check() -> None:  # pragma: no cover
     from schemas import ALL_FUNCTION_DECLARATIONS
 
     ctx = ToolContext()
-    tools = _build_tools(ctx)
+    agent = MemoraAgent(tool_ctx=ctx)
     declared = {d["name"] for d in ALL_FUNCTION_DECLARATIONS}
-    tool_names = {t.info.name for t in tools}
+    tool_names = {t.info.name for t in agent.tools}
     assert tool_names == declared, f"mismatch: {tool_names ^ declared}"
-    assert len(tools) == len(ALL_FUNCTION_DECLARATIONS)
-    print(f"agent self-check OK: {len(tools)} tools generated from {len(declared)} declarations")
+    assert len(agent.tools) == len(ALL_FUNCTION_DECLARATIONS)
+    print(
+        f"agent self-check OK: {len(agent.tools)} tools generated from {len(declared)} declarations"
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

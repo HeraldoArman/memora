@@ -5,7 +5,8 @@ google.realtime.RealtimeModel. Audio, video, reconnection, VAD-based turn
 detection, and audio output are handled by the framework.
 
 InsightFace runs in parallel via track_handler for face recognition →
-tool_ctx.last_face. Gemini sees video directly via RoomOptions(video_input=True).
+tool_ctx.last_face. Video is NOT sent to Gemini (context window exhaustion);
+face/scene data reaches the model via tool_ctx.
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ import logging
 from livekit import rtc
 from livekit.agents import AgentSession, JobContext, room_io
 from livekit.agents.llm import ChatMessage
-from livekit.plugins import google
 
 from gateway.livekit.track_handler import handle_video_track
 from reasoning.agent.agent import MemoraAgent
@@ -152,7 +152,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # --- Create agent ---
     log.info(
-        "creating MemoraAgent (tool_ctx with %d tools)...",
+        "creating MemoraAgent (%d tool declarations)...",
         len(__import__("schemas").ALL_FUNCTION_DECLARATIONS),
     )
     agent = MemoraAgent(
@@ -164,19 +164,10 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     log.info("MemoraAgent created")
 
-    # --- Create AgentSession with Gemini RealtimeModel ---
-    log.info(
-        "creating AgentSession with Gemini RealtimeModel: model=%s voice=Puck",
-        settings.gemini_live_model,
-    )
-    session = AgentSession(
-        llm=google.realtime.RealtimeModel(
-            model=settings.gemini_live_model,
-            voice="Puck",
-            api_key=settings.gemini_api_key,
-        ),
-    )
-    log.info("AgentSession created (model=%s)", settings.gemini_live_model)
+    # --- Create AgentSession (LLM is on the Agent, matching tuntun-in) ---
+    log.info("creating AgentSession")
+    session = AgentSession()
+    log.info("AgentSession created")
 
     # --- Wire speech observations via user_input_transcribed ---
     @session.on("user_input_transcribed")
@@ -306,7 +297,10 @@ async def entrypoint(ctx: JobContext) -> None:
                 "prompt received: %r — generating reply via session.generate_reply", text[:200]
             )
             asyncio.create_task(agent_log.emit("user", f"[prompt] {text}"))
-            session.generate_reply(instructions=text)
+            try:
+                session.generate_reply(instructions=text)
+            except RuntimeError:
+                log.warning("prompt received but AgentSession not running; dropping")
         elif topic == "device":
             from gateway.livekit.data_channel import handle_data_received
 
@@ -315,16 +309,16 @@ async def entrypoint(ctx: JobContext) -> None:
             log.debug("unknown data topic: %r len=%d", topic, len(data))
 
     # --- Start the session ---
-    log.info("starting AgentSession with RoomOptions(video_input=True, audio_input=True)...")
+    log.info(
+        "starting AgentSession with RoomOptions(video_input=True, audio_input=True, audio_output=True)..."
+    )
     await session.start(
         room=room,
         agent=agent,
         room_options=room_io.RoomOptions(
             video_input=True,
             audio_input=True,
-            text_output=room_io.TextOutputOptions(
-                sync_transcription=False,
-            ),
+            audio_output=True,
         ),
     )
     log.info("agent session started — agent is now listening and seeing video")

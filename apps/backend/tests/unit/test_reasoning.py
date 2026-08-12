@@ -14,7 +14,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
-from reasoning.agent.agent import MemoraAgent, _build_tools
+from reasoning.agent.agent import MemoraAgent
 from reasoning.prompts.system import build_system_instruction
 from reasoning.response.display import _MAX_PAYLOAD, Display
 from tools import ToolContext
@@ -68,7 +68,7 @@ class TestMemoraAgent:
         agent = MemoraAgent(tool_ctx=ctx, context_engine=engine)
         assert agent._context_engine is engine
 
-    async def test_on_enter_calls_update_instructions(self) -> None:
+    async def test_on_enter_folds_context_into_greeting(self) -> None:
         ctx = ToolContext()
         engine = AsyncMock()
         engine.build = AsyncMock(return_value=(None, "Fakta: Asep suka sushi"))
@@ -79,8 +79,9 @@ class TestMemoraAgent:
         type(agent).session = PropertyMock(return_value=mock_session)
         try:
             await agent.on_enter()
-            agent.update_instructions.assert_awaited_once()
-            instructions = agent.update_instructions.await_args.args[0]
+            agent.update_instructions.assert_not_awaited()
+            mock_session.generate_reply.assert_awaited_once()
+            instructions = mock_session.generate_reply.await_args.kwargs.get("instructions", "")
             assert "Asep suka sushi" in instructions
         finally:
             del type(agent).session
@@ -97,6 +98,9 @@ class TestMemoraAgent:
         try:
             await agent.on_enter()
             agent.update_instructions.assert_not_awaited()
+            mock_session.generate_reply.assert_awaited_once()
+            instructions = mock_session.generate_reply.await_args.kwargs.get("instructions", "")
+            assert "belum ada konteks" not in instructions
         finally:
             del type(agent).session
 
@@ -174,10 +178,10 @@ class TestMemoraAgent:
         from schemas import ALL_FUNCTION_DECLARATIONS
 
         ctx = ToolContext()
-        tools = _build_tools(ctx)
-        assert len(tools) == len(ALL_FUNCTION_DECLARATIONS)
+        agent = MemoraAgent(tool_ctx=ctx)
+        assert len(agent.tools) == len(ALL_FUNCTION_DECLARATIONS)
         declared_names = {d["name"] for d in ALL_FUNCTION_DECLARATIONS}
-        tool_names = {t.info.name for t in tools}
+        tool_names = {t.info.name for t in agent.tools}
         assert tool_names == declared_names
 
     async def test_tool_dispatch_known_tool(self) -> None:
@@ -427,18 +431,23 @@ class TestObservationEngineWiring:
 
 
 class TestContextRefresh:
-    """Do Soon #3: periodic context refresh via _refresh_context()."""
+    """Do Soon #3: periodic context refresh via _refresh_context().
 
-    async def test_refresh_updates_instructions(self) -> None:
+    _refresh_context no longer calls update_instructions() — Gemini Live API
+    corrupts the audio stream on mid-session send_client_content. It just
+    builds context + logs it. The context from on_enter's generate_reply
+    persists in the conversation history.
+    """
+
+    async def test_refresh_builds_context_no_update(self) -> None:
         ctx = ToolContext()
         engine = AsyncMock()
         engine.build = AsyncMock(return_value=(None, "Fakta baru: Budi suka kopi"))
         agent = MemoraAgent(tool_ctx=ctx, context_engine=engine)
         agent.update_instructions = AsyncMock()
         await agent._refresh_context()
-        agent.update_instructions.assert_awaited_once()
-        instructions = agent.update_instructions.await_args.args[0]
-        assert "Budi suka kopi" in instructions
+        engine.build.assert_awaited_once()
+        agent.update_instructions.assert_not_awaited()
 
     async def test_refresh_skips_empty_context(self) -> None:
         ctx = ToolContext()
@@ -456,7 +465,7 @@ class TestContextRefresh:
         await agent._refresh_context()
         agent.update_instructions.assert_not_awaited()
 
-    async def test_refresh_exception_keeps_existing(self) -> None:
+    async def test_refresh_exception_no_crash(self) -> None:
         ctx = ToolContext()
         engine = AsyncMock()
         engine.build = AsyncMock(side_effect=RuntimeError("DB down"))

@@ -2,7 +2,7 @@
 
 AgentSession handles audio input/output to Gemini directly. This module only
 runs the video loop for face recognition: sample frames → InsightFace →
-tool_ctx.last_face. Gemini sees video separately via RoomOptions(video_input=True).
+tool_ctx.last_face. Gemini sees video directly via RoomOptions(video_input=True).
 """
 
 from __future__ import annotations
