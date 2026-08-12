@@ -238,7 +238,7 @@ class TestLiveSessionRouting:
 
 
 class TestReasoningAgent:
-    def _agent(self) -> ReasoningAgent:
+    def _agent(self, on_extract=None) -> ReasoningAgent:
         session = MagicMock()
         session.connect = AsyncMock()
         session.aclose = AsyncMock()
@@ -248,6 +248,7 @@ class TestReasoningAgent:
         session.start_receive = MagicMock()
         session.set_audio_sink = MagicMock()
         session.set_turn_complete_callback = MagicMock()
+        session._recent_turns = []
         speaker = MagicMock()
         speaker.publish = MagicMock()
         speaker.aclose = AsyncMock()
@@ -259,6 +260,7 @@ class TestReasoningAgent:
             session=session,
             speaker=speaker,
             display=display,
+            on_extract=on_extract,
         )
         return agent
 
@@ -272,9 +274,42 @@ class TestReasoningAgent:
         agent.session.start_receive.assert_called_once()
         assert agent._connected
 
-    async def test_on_turn_is_noop(self) -> None:
-        # bare-minimum: _on_turn is a no-op (no extraction)
+    async def test_on_turn_noop_without_callback(self) -> None:
         agent = self._agent()
+        await agent._on_turn()  # must not raise
+
+    async def test_on_turn_fires_on_extract(self) -> None:
+        called = []
+
+        async def _extract(text, sid):
+            called.append((text, sid))
+
+        agent = self._agent(on_extract=_extract)
+        agent.ctx.session_id = "sid-123"
+        agent.session._recent_turns = ["Pengguna: halo, nama saya Asep", "Asisten: halo Asep"]
+        await agent._on_turn()
+        assert len(called) == 1
+        text, sid = called[0]
+        assert "Asep" in text
+        assert sid == "sid-123"
+
+    async def test_on_turn_skips_empty_turns(self) -> None:
+        called = []
+
+        async def _extract(text, sid):
+            called.append(text)
+
+        agent = self._agent(on_extract=_extract)
+        agent.session._recent_turns = []
+        await agent._on_turn()
+        assert called == []
+
+    async def test_on_turn_handles_pipeline_error(self) -> None:
+        async def _extract(text, sid):
+            raise RuntimeError("pipeline down")
+
+        agent = self._agent(on_extract=_extract)
+        agent.session._recent_turns = ["Pengguna: test"]
         await agent._on_turn()  # must not raise
 
     async def test_on_transcription_logs_only(self) -> None:

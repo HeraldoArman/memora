@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from reasoning.response.display import Display
@@ -37,6 +38,7 @@ class ReasoningAgent:
         session: GeminiLiveSession | None = None,
         speaker: Speaker | None = None,
         display: Display | None = None,
+        on_extract: Callable[[str, str | None], Awaitable[None]] | None = None,
     ) -> None:
         self.room = room
         self.ctx = tool_ctx
@@ -44,6 +46,7 @@ class ReasoningAgent:
         self.speaker = speaker or Speaker()
         self.display = display or Display(room)
         self._connected = False
+        self._on_extract = on_extract
 
     async def start(self, current: object = None) -> None:
         """Connect the live session, publish speaker, spawn receive loop.
@@ -67,8 +70,17 @@ class ReasoningAgent:
         log.info("reasoning agent started")
 
     async def _on_turn(self) -> None:
-        """Turn boundary — no extraction in bare-minimum."""
-        pass
+        """Turn boundary — fire extraction on the last user prompt + agent response."""
+        if self._on_extract is None:
+            return
+        turns = self.session._recent_turns
+        if not turns:
+            return
+        text = "\n".join(turns[-2:])
+        try:
+            await self._on_extract(text, self.ctx.session_id)
+        except Exception as exc:  # noqa: BLE001 — pipeline errors must not kill the agent
+            log.warning("on_extract failed: %s", exc)
 
     async def _on_transcription(self, text: str, is_final: bool) -> None:
         """Input speech transcription — no observation feed in bare-minimum."""

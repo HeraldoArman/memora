@@ -10,6 +10,7 @@ import json
 from unittest.mock import AsyncMock
 
 import pytest
+from env import get_settings
 
 from constants import ConfidenceLevel, MemoryCategory
 from extraction.classifier import classify, for_graph
@@ -182,7 +183,7 @@ class TestKnowledgeExtractor:
         client = _FakeClient(result=self._resp(payload))
         out = await KnowledgeExtractor(client=client).extract("Asep is here")
         assert out == _normalize(payload)
-        assert client.calls == ["gemini-2.5-flash"]  # text model from settings
+        assert client.calls == [get_settings().gemini_text_model]  # text model from settings
 
     async def test_extract_api_failure_returns_empty(self) -> None:
         client = _FakeClient(error=RuntimeError("api down"))

@@ -46,7 +46,18 @@ class RoomSession:
             dim=settings.face_embedding_dim,
         )
         tool_ctx = ToolContext(face_repo=face_repo)
-        tool_ctx.session_id = None
+
+        # Step 1: lazily create a conversation session for episodic memory + fact linking.
+        session_id = None
+        try:
+            from services import MemoryService
+
+            session_id = await MemoryService().start_session(summary="livekit room")
+            tool_ctx.session_id = session_id
+            log.info("conversation session started: %s", session_id)
+        except Exception:  # noqa: BLE001 — DB down → extraction still runs, no episodic record
+            log.warning("conversation session start failed; episodic memory unavailable")
+
         log.info("room session face repo ready: %d embedding(s)", face_repo.size)
 
         # ponytail: insightface loads ~9s of ONNX models — fire-and-forget in a thread
@@ -58,6 +69,12 @@ class RoomSession:
 
         _aio.get_event_loop().run_in_executor(None, preload_face)
 
+        # Step 1: wire extraction pipeline as the on_extract callback.
+        async def _on_extract(text: str, sid: str | None) -> None:
+            from pipeline.runner import PipelineRunner
+
+            await PipelineRunner().run(text, session_id=sid)
+
         session = cls(
             tool_ctx=tool_ctx,
             face_repo=face_repo,
@@ -65,6 +82,7 @@ class RoomSession:
         session.agent = ReasoningAgent(
             room=room,
             tool_ctx=tool_ctx,
+            on_extract=_on_extract,
         )
         return session
 

@@ -41,12 +41,31 @@ def _patch_face_repo(monkeypatch, repo: FaceRepository | None = None) -> FaceRep
     return repo
 
 
+def _patch_memory_service(
+    monkeypatch, *, session_id: str | None = None, raise_on_start: bool = False
+) -> None:
+    """Patch MemoryService.start_session so create() doesn't need a live Postgres."""
+    if raise_on_start:
+
+        async def _boom(*a, **k):
+            raise RuntimeError("postgres down")
+
+        monkeypatch.setattr("services.MemoryService.start_session", _boom)
+    else:
+
+        async def _start_session(self, *, summary=None):
+            return session_id
+
+        monkeypatch.setattr("services.MemoryService.start_session", _start_session)
+
+
 class _FakeAgent:
     """Stands in for ReasoningAgent in RoomSession.create — records construction kwargs."""
 
     def __init__(self, **kwargs) -> None:
         self.room = kwargs["room"]
         self.ctx = kwargs["tool_ctx"]
+        self.on_extract = kwargs.get("on_extract")
         self.started = False
 
     async def start(self, current=None) -> None:
@@ -61,6 +80,7 @@ class TestRoomSessionCreate:
         repo = _patch_face_repo(monkeypatch)
         monkeypatch.setattr("gateway.session.ReasoningAgent", _FakeAgent)
         monkeypatch.setattr("perception.face.recognizer.preload", lambda: None)
+        _patch_memory_service(monkeypatch, session_id="sid-test")
         room = MagicMock()
         session = await RoomSession.create(room)
         assert session.face_repo is repo
@@ -68,6 +88,18 @@ class TestRoomSessionCreate:
         assert session.agent.room is room
         assert session.agent.ctx is session.tool_ctx
         assert session.tool_ctx.last_face is None  # no face detected yet
+        assert session.tool_ctx.session_id == "sid-test"
+        assert session.agent.on_extract is not None
+
+    async def test_create_session_failure_is_graceful(self, monkeypatch) -> None:
+        _patch_face_repo(monkeypatch)
+        monkeypatch.setattr("gateway.session.ReasoningAgent", _FakeAgent)
+        monkeypatch.setattr("perception.face.recognizer.preload", lambda: None)
+        _patch_memory_service(monkeypatch, session_id=None, raise_on_start=True)
+        room = MagicMock()
+        session = await RoomSession.create(room)
+        assert session.tool_ctx.session_id is None
+        assert session.agent.on_extract is not None  # extraction still wired
 
 
 class TestRoomSessionLifecycle:
