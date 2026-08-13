@@ -6,7 +6,7 @@ failure and still folds in reminders + the current snapshot.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from context.engine import ContextEngine
 from context.packager import package, to_text
@@ -109,17 +109,17 @@ class TestSummarizer:
         assert out == "short text"
 
     async def test_api_failure_truncates(self) -> None:
-        bad = AsyncMock()
-        bad.aio.models.generate_content = AsyncMock(side_effect=RuntimeError("no key"))
+        bad = MagicMock()
+        bad.models.generate_content = MagicMock(side_effect=RuntimeError("no key"))
         s = Summarizer(char_budget=10)
         s._client = bad
         out = await s.summarize("a very long text that exceeds the budget")
         assert out == "a very long text that exceeds the budget"[:10]
 
     async def test_api_success_returns_summary(self) -> None:
-        client = AsyncMock()
+        client = MagicMock()
         resp = type("R", (), {"text": "ringkasan", "parsed": None})
-        client.aio.models.generate_content = AsyncMock(return_value=resp)
+        client.models.generate_content = MagicMock(return_value=resp)
         s = Summarizer(char_budget=10)
         s._client = client
         out = await s.summarize("x" * 100)

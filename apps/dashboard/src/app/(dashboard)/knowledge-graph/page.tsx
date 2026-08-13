@@ -140,12 +140,12 @@ export default function GraphPage() {
               height={GRAPH_H}
               nodeLabel="label"
               nodeColor={(node: any) => NODE_COLORS[node.type] ?? "#9aa0ae"}
-              nodeRelSize={10}
+              nodeRelSize={5}
               linkLabel="label"
               linkColor={() => "#c9cefc"}
-              linkWidth={5}
+              linkWidth={3}
 
-              linkDirectionalArrowLength={10}
+              linkDirectionalArrowLength={5}
               linkDirectionalArrowRelPos={1}
               onNodeClick={(node: any) => setSelected(node)}
               cooldownTicks={1000}

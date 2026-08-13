@@ -14,10 +14,11 @@ config MEMORA_LIVEKIT_SERVER_URL
 
 config MEMORA_TOKEN_URL
     string "Dashboard token endpoint URL"
-    default "http://192.168.1.100:3000/api/token"
+    default "https://dashboard-production-43b8.up.railway.app/api/token"
     help
-        HTTP POST endpoint exposed by the dashboard. It mints a LiveKit join
-        token and dispatches the backend agent for the requested room.
+        HTTPS POST endpoint exposed by the deployed dashboard. It mints a
+        LiveKit join token and dispatches the backend agent for the requested
+        room. Override this with a LAN URL for local development.
 
 config MEMORA_LIVEKIT_TOKEN
     string "Fallback pre-generated LiveKit token"
@@ -33,9 +34,10 @@ config MEMORA_LIVEKIT_IDENTITY
 
 config MEMORA_INGEST_URL
     string "Backend video ingest URL"
-    default "http://192.168.1.100:8000/api/media/video/frame"
+    default "https://backend-production-f5b2.up.railway.app/api/media/video/frame"
     help
-        HTTP POST endpoint on the backend Video Bridge. The ESP sends
-        raw JPEG frames here (Content-Type: image/jpeg) at 1 FPS.
+        HTTPS POST endpoint on the deployed backend Video Bridge. The ESP
+        sends raw JPEG frames here (Content-Type: image/jpeg) at 1 FPS.
+        Override this with a LAN URL for local development.
 
 endmenu

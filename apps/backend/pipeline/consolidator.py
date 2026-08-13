@@ -9,7 +9,6 @@ Writes:
 - Person entities → PersonService.register_person (MERGE on person_id; new id if none).
 - Non-person entities → KnowledgeService.upsert_entity (MERGE on name).
 - Relationships → KnowledgeService.add_relation (Person→entity edge, MERGE).
-- Episode → MemoryService.add_message (raw content persisted as episodic record).
 
 A name→person_id map threads through so relationships link the right Person node.
 """
@@ -141,15 +140,6 @@ class Consolidator:
                 )
 
         from uuid import UUID
-
-        # Persist the episode as a conversation message (episodic record).
-        if session_id and content:
-            try:
-                await self.memory_service.add_message(
-                    session_id=UUID(session_id), role="user", content=content
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.warning("episodic persist failed: %s", e)
 
         # Persist extracted fact statements (raw strings → memory_facts). Confidence is
         # per-fact: a first-person statement ("I'm Asep") gets the provenance boost, a

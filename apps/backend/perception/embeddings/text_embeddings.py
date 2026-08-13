@@ -9,6 +9,7 @@ IndexFlatIP. Failure → None (retriever falls back to name-substring).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import numpy as np
@@ -16,17 +17,17 @@ from env import get_settings
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "text-embedding-004"
-_DEFAULT_DIM = 768
+# ponytail: gemini-embedding-001 returns 3072-dim vectors. Must match TextMemoryIndex dim.
+_DEFAULT_DIM = 3072
 
 
 class TextEmbedder:
     """Embed text into L2-normalized vectors via Gemini."""
 
-    def __init__(
-        self, client=None, *, model: str = _DEFAULT_MODEL, dim: int = _DEFAULT_DIM
-    ) -> None:
+    def __init__(self, client=None, *, model: str | None = None, dim: int = _DEFAULT_DIM) -> None:
         self._client = client
+        if model is None:
+            model = get_settings().gemini_embedding_model
         self.model = model
         self.dim = dim
 
@@ -34,17 +35,23 @@ class TextEmbedder:
         if self._client is not None:
             return self._client
         from google import genai
+        from google.genai import types
 
-        self._client = genai.Client(api_key=get_settings().gemini_api_key)
+        settings = get_settings()
+        self._client = genai.Client(
+            api_key=settings.gemini_api_key,
+            http_options=types.HttpOptions(timeout=settings.gemini_http_timeout_ms),
+        )
         return self._client
 
     async def embed(self, text: str) -> np.ndarray | None:
-        """Embed a single text → L2-normalized 768-d vector. None on failure/empty."""
+        """Embed a single text → L2-normalized vector. None on failure/empty."""
         if not text or not text.strip():
             return None
         try:
             client = self._get_client()
-            resp = await client.aio.models.embed_content(
+            resp = await asyncio.to_thread(
+                client.models.embed_content,
                 model=self.model,
                 contents=text,
             )
@@ -62,7 +69,8 @@ class TextEmbedder:
             return []
         try:
             client = self._get_client()
-            resp = await client.aio.models.embed_content(
+            resp = await asyncio.to_thread(
+                client.models.embed_content,
                 model=self.model,
                 contents=texts,
             )
