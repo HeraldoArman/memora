@@ -24,6 +24,8 @@ async def current_scene(args: dict, ctx: ToolContext) -> dict:
 
 
 async def visible_people(args: dict, ctx: ToolContext) -> dict:
+    """List currently visible people by running face recognition on-demand."""
+    await ctx.refresh_face()
     lf = ctx.last_face
     if lf is None:
         return {"available": False, "people": []}

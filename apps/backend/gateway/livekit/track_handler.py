@@ -1,14 +1,16 @@
-"""Track handler — wire subscribed video tracks to InsightFace.
+"""Track handler — store video frames + run scene understanding.
 
-AgentSession handles audio input/output to Gemini directly. This module only
-runs the video loop for face recognition: sample frames → InsightFace →
-tool_ctx.last_face. Gemini sees video directly via RoomOptions(video_input=True).
+Face recognition (InsightFace) is NOT run here — it runs on-demand when a tool
+calls ctx.refresh_face(). This keeps the asyncio event loop (audio pump) free
+from ONNX inference + recycling stalls. The video loop just stores the latest
+BGR frame in tool_ctx.last_frame and fires scene understanding every 5 frames.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 log = logging.getLogger(__name__)
 
@@ -33,48 +35,36 @@ async def handle_video_track(
     """
     from livekit import rtc
 
-    from perception.face.recognizer import FaceRecognizer
     from perception.vision.sampler import FrameSampler
 
-    log.info("handle_video_track: creating VideoStream + FrameSampler + FaceRecognizer")
+    log.info("handle_video_track: creating VideoStream + FrameSampler")
     video_stream = rtc.VideoStream(track)
     sampler = FrameSampler(video_stream)
-    recognizer = FaceRecognizer()
 
     scene_task: asyncio.Task | None = None  # ponytail: single-flight guard for scene understanding
 
     async def _video_loop() -> None:
         nonlocal scene_task
-        log.info("video loop started — sampling frames for InsightFace + scene understanding")
+        log.info("video loop started — storing frames + scene understanding")
         frame_count = 0
+        t_prev = None
         try:
             async for frame in sampler.frames():
                 frame_count += 1
+                t0 = time.perf_counter()
                 try:
                     bgr = frame["bgr"]
-                    faces = await asyncio.to_thread(recognizer.detect_and_embed, bgr)
+                    # Store latest frame for on-demand face recognition (tools call
+                    # ctx.refresh_face() when they need identity — no more 30x/min ONNX)
+                    tool_ctx.last_frame = bgr
                     log.info(
-                        "video frame %d: %dx%d faces=%d",
+                        "video frame %d: %dx%d stored in %.1fms (face recognition deferred "
+                        "to tool call)",
                         frame_count,
                         bgr.shape[1],
                         bgr.shape[0],
-                        len(faces),
+                        (time.perf_counter() - t0) * 1000,
                     )
-                    if faces:
-                        log.debug(
-                            "video frame %d: face detected (det_score=%.3f bbox=%s), running lookup",
-                            frame_count,
-                            getattr(faces[0], "det_score", 0),
-                            getattr(faces[0], "bbox", None),
-                        )
-                        await _update_last_face(faces[0], tool_ctx, obs_engine)
-                    else:
-                        if tool_ctx.last_face is not None:
-                            log.debug(
-                                "video frame %d: no face detected, clearing stale last_face",
-                                frame_count,
-                            )
-                            tool_ctx.last_face = None
 
                     # Step 3: scene understanding every 5 frames (~5s at 1 FPS)
                     # ponytail: single-flight guard — skip if previous call still in flight.
@@ -87,18 +77,34 @@ async def handle_video_track(
                     ):
                         jpeg = _encode_jpeg(bgr)
                         if jpeg:
+                            jpeg_ms = (time.perf_counter() - t0) * 1000
+                            log.info(
+                                "scene understanding triggered: frame=%d jpeg=%d bytes "
+                                "encode_ms=%.1f",
+                                frame_count,
+                                len(jpeg),
+                                jpeg_ms,
+                            )
                             scene_task = asyncio.create_task(
                                 _understand_scene(jpeg, tool_ctx, scene_understander, obs_engine)
                             )
+                            scene_task.add_done_callback(
+                                lambda t: log.info("scene task done: cancelled=%s", t.cancelled())
+                            )
 
-                    del bgr, faces
-                    # gc.collect() removed: it ran on the event-loop thread every ~10s
-                    # and froze the Gemini Live audio pump (stop-the-world). The ONNX
-                    # leak it fought is handled off-loop in recognizer._recycle_app()
-                    # (which gc.collect()s on its own executor thread). Let Python's
-                    # generational GC handle the rest.
+                    del bgr
+                    # per-frame cadence: gap between consumer deliveries. If this
+                    # climbs, the pipe (SFU → sampler) is throttling or dropping.
+                    gap_ms = (time.perf_counter() - t_prev) * 1000 if t_prev is not None else 0.0
+                    t_prev = time.perf_counter()
+                    log.info(
+                        "frame %d processed: total_ms=%.1f gap_from_prev_ms=%.1f",
+                        frame_count,
+                        (t_prev - t0) * 1000,
+                        gap_ms,
+                    )
                 except Exception:  # noqa: BLE001
-                    log.exception("face recognize failed on frame %d", frame_count)
+                    log.exception("video frame %d failed", frame_count)
         except asyncio.CancelledError:
             log.info("video loop cancelled (task cleanup)")
             raise
@@ -202,15 +208,18 @@ async def _update_last_face(detected, tool_ctx, obs_engine=None) -> None:
 
 async def _understand_scene(jpeg: bytes, tool_ctx, scene_understander, obs_engine=None) -> None:
     """Run scene understanding off the video loop so face recognition never blocks."""
+    t0 = time.perf_counter()
     try:
         scene = await scene_understander.understand(jpeg)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
         if scene:
             tool_ctx.last_scene = scene
             log.info(
-                "scene understood: location=%s activity=%s confidence=%.2f",
+                "scene understood: location=%s activity=%s confidence=%.2f took_ms=%.1f",
                 scene.get("location"),
                 scene.get("activity"),
                 scene.get("confidence", 0),
+                elapsed_ms,
             )
             if obs_engine is not None:
                 from dto.observations import SceneObservation
@@ -223,8 +232,10 @@ async def _understand_scene(jpeg: bytes, tool_ctx, scene_understander, obs_engin
                         confidence=scene.get("confidence", 0.8),
                     )
                 )
+        else:
+            log.warning("scene understanding returned nothing took_ms=%.1f", elapsed_ms)
     except Exception:  # noqa: BLE001
-        log.debug("scene understanding failed")
+        log.warning("scene understanding failed took_ms=%.1f", (time.perf_counter() - t0) * 1000)
 
 
 # --- self-check: _update_last_face with None repo is a no-op ---

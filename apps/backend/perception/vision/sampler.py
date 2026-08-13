@@ -33,25 +33,52 @@ class FrameSampler:
         LiveKit VideoStream yields events with a .frame attribute (VideoFrame). We convert
         to BGRA → numpy → BGR, then JPEG-encode.
         """
+        import time as _time
+
         from livekit import rtc
 
         last_emit = None
+        received = 0
+        skipped = 0
+        t_loop_start = _time.perf_counter()
         async for ev in self.video_stream:
             frame = getattr(ev, "frame", ev)
             now = asyncio.get_event_loop().time()
+            received += 1
             # ponytail: None sentinel so the first frame always emits. A 0.0
             # sentinel breaks when the monotonic clock is still near 0.0 (fresh
             # loop on a fast/loaded CI runner): `now - 0.0 < interval` is True
             # and the first frame gets skipped → 0 frames yielded.
             if last_emit is not None and now - last_emit < self.interval:
+                skipped += 1
+                # ponytail: log at debug — bursts flood at 30+ FPS. INFO would spam.
+                logger.debug(
+                    "frame skipped (throttle): received=%d skipped=%d fps=%.1f",
+                    received,
+                    skipped,
+                    received / max(_time.perf_counter() - t_loop_start, 1e-9),
+                )
                 continue
+            gap_since_last_ms = (now - last_emit) * 1000 if last_emit is not None else 0.0
             last_emit = now
+            t0 = _time.perf_counter()
             argb = frame.convert(rtc.VideoBufferType.BGRA).data
             h, w = frame.height, frame.width
             # copy to break reference to LiveKit's internal buffer (np.frombuffer
             # creates a view that keeps the original alive → memory leak)
             bgr = np.frombuffer(argb, dtype=np.uint8).reshape(h, w, 4)[:, :, :3].copy()
+            convert_ms = (_time.perf_counter() - t0) * 1000
             self.frame_no += 1
+            logger.info(
+                "h264 sampled frame=%d %dx%d convert_ms=%.1f received=%d skipped=%d gap_ms=%.1f",
+                self.frame_no,
+                w,
+                h,
+                convert_ms,
+                received,
+                skipped,
+                gap_since_last_ms,
+            )
             yield {"frame_no": self.frame_no, "bgr": bgr}
 
 

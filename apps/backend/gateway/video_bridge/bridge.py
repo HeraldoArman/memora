@@ -105,6 +105,11 @@ class VideoBridge:
         while True:
             try:
                 jpeg_bytes = await self.session.queue.get()
+                # ponytail: queue depth at dequeue tells us if ingest outruns publish
+                # (device pushes faster than we can decode+encode) or if the frame
+                # sat queued (device slow / network gap). Both show up as "slow H264".
+                queue_depth = self.session.queue.qsize()
+                frame_age_ms = self.session.last_frame_age_ms or 0.0
                 t0 = time.perf_counter()
 
                 np_arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
@@ -134,11 +139,14 @@ class VideoBridge:
                 self.session.total_decode_ms += decode_ms
 
                 log.info(
-                    "h264 frame published device=%s frame=%d decode_ms=%.1f jpeg_bytes=%d",
+                    "h264 frame published device=%s frame=%d decode_ms=%.1f jpeg_bytes=%d "
+                    "queue_depth=%d frame_age_ms=%.1f",
                     self.device_id,
                     self.session.published_frames,
                     decode_ms,
                     len(jpeg_bytes),
+                    queue_depth,
+                    frame_age_ms,
                 )
 
                 del bgr, rgb, np_arr, jpeg_bytes
