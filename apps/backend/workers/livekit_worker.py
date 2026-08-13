@@ -52,7 +52,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
 
 def _start_health_server(port: int) -> None:
-    srv = HTTPServer(("127.0.0.1", port), _HealthHandler)
+    srv = HTTPServer(("0.0.0.0", port), _HealthHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     log.info("worker health check on http://127.0.0.1:%d/health", port)
 
