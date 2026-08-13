@@ -17,6 +17,7 @@ from vector.index import FaceIndex
 from vector.repository import FaceRepository
 
 from gateway.livekit.entrypoint import _init_stores, entrypoint
+from gateway.livekit.minimal_entrypoint import _is_gemini_31, minimal_entrypoint
 from gateway.livekit.track_handler import _encode_jpeg, _understand_scene, _update_last_face
 from tools import ToolContext
 
@@ -141,6 +142,16 @@ class TestEntrypoint:
 
         assert callable(entrypoint)
         assert inspect.iscoroutinefunction(entrypoint)
+
+    def test_minimal_entrypoint_is_async_handler(self) -> None:
+        import inspect
+
+        assert callable(minimal_entrypoint)
+        assert inspect.iscoroutinefunction(minimal_entrypoint)
+
+    def test_gemini_31_model_detection(self) -> None:
+        assert _is_gemini_31("gemini-3.1-flash-live-preview")
+        assert not _is_gemini_31("gemini-2.5-flash-native-audio-preview-12-2025")
 
 
 class TestEncodeJpeg:

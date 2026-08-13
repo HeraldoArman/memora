@@ -124,9 +124,14 @@ async def entrypoint(ctx: JobContext) -> None:
 
     text_index = TextMemoryIndex(dim=3072)
 
-    from pipeline.runner import PipelineRunner
+    _pipeline = None
+    if settings.pipeline_enabled:
+        from pipeline.runner import PipelineRunner
 
-    _pipeline = PipelineRunner(text_embedder=text_embedder, text_index=text_index)
+        _pipeline = PipelineRunner(text_embedder=text_embedder, text_index=text_index)
+        log.info("extraction pipeline enabled")
+    else:
+        log.warning("extraction pipeline disabled by PIPELINE_ENABLED=false")
 
     # ponytail: debounce + serialize extraction. Every user turn fires create_task
     # concurrently — 5 parallel Gemini calls starve the event loop and delay audio.
@@ -139,6 +144,8 @@ async def entrypoint(ctx: JobContext) -> None:
     _extract_pending: list[str] = []
 
     async def _on_extract(text: str, sid: str | None) -> None:
+        if _pipeline is None:
+            return
         log.info("on_extract triggered: text=%r sid=%s", text[:200], sid)
         try:
             await _pipeline.run(text, session_id=sid)
@@ -149,6 +156,8 @@ async def entrypoint(ctx: JobContext) -> None:
     def _schedule_extract(sid: str | None) -> None:
         """Debounce extraction: batch rapid turns, run once 2s after the last."""
         nonlocal _extract_timer
+        if _pipeline is None:
+            return
         if _extract_timer is not None:
             _extract_timer.cancel()
         loop = _asyncio.get_event_loop()
@@ -202,7 +211,7 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     agent = MemoraAgent(
         tool_ctx=tool_ctx,
-        on_extract=_on_extract,
+        on_extract=_on_extract if _pipeline is not None else None,
         context_engine=context_engine,
         planner=planner,
         on_log=agent_log.emit,
@@ -358,6 +367,14 @@ async def entrypoint(ctx: JobContext) -> None:
         log.info("data_received: topic=%r len=%d from=%s", topic, len(data), packet.participant)
         if topic == "prompt":
             text = data.decode("utf-8", errors="replace")
+            if settings.gemini_live_model.startswith("gemini-3.1-"):
+                log.warning("prompt dropped: Gemini 3.1 does not support generate_reply()")
+                asyncio.create_task(
+                    agent_log.emit(
+                        "system", "Prompt ignored: Gemini 3.1 supports voice turns only."
+                    )
+                )
+                return
             log.info(
                 "prompt received: %r — generating reply via session.generate_reply", text[:200]
             )
