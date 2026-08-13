@@ -12,11 +12,18 @@
         "command": "uv run python -m workers.livekit_worker dev"
       }
     },
+    "dev:lan": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/backend",
+        "command": "uv run python -m workers.livekit_worker dev"
+      }
+    },
     "build": {
       "executor": "nx:run-commands",
       "options": {
         "cwd": "apps/backend",
-        "command": "uv run python -m py_compile workers/livekit_worker.py gateway/livekit/entrypoint.py"
+        "command": "uv run python -m py_compile workers/livekit_worker.py gateway/livekit/entrypoint.py gateway/livekit/minimal_entrypoint.py"
       }
     }
   }

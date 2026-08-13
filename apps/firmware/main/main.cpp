@@ -34,6 +34,11 @@ extern "C" void app_main() {
         ESP_LOGE(kTag, "camera/microphone capture initialization failed");
         return;
     }
+    if (!memora::jpeg::init()) {
+        memora::display::show("Kamera gagal");
+        ESP_LOGE(kTag, "JPEG camera initialization failed");
+        return;
+    }
     if (!memora::livekit::init() || !memora::livekit::connect()) {
         memora::display::show("LiveKit gagal");
         return;
@@ -41,5 +46,5 @@ extern "C" void app_main() {
 
     memora::livekit::publish_telemetry(false);
     memora::jpeg::start();
-    memora::display::show("Memora siap");
+    memora::display::show("ini Rifqi");
 }

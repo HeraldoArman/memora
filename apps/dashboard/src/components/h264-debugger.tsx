@@ -2,7 +2,17 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Room, RoomEvent, Track, type RemoteTrack } from "livekit-client";
+import {
+  Room,
+  RoomEvent,
+  Track,
+  VideoQuality,
+  type RemoteTrack,
+  type RemoteTrackPublication,
+} from "livekit-client";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardBody, CardHeader } from "@/components/ui/card";
 
 type ConnectionStatus = "idle" | "connecting" | "connected" | "error";
 
@@ -30,15 +40,27 @@ export function H264Debugger() {
   const [frameCount, setFrameCount] = useState(0);
   const [dimensions, setDimensions] = useState("—");
   const [lastFrame, setLastFrame] = useState("—");
+  const [logs, setLogs] = useState<string[]>([]);
 
   const roomRef = useRef<Room | null>(null);
+
+  const log = useCallback((line: string) => {
+    setLogs((prev) => [...prev.slice(-80), `${new Date().toLocaleTimeString()}  ${line}`]);
+  }, []);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const frameCountRef = useRef(0);
   const rafRef = useRef<number | null>(null);
 
   const stopFrameProbe = useCallback(() => {
     if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
+      // rafRef holds either a setInterval ID (number) or a requestVideoFrameCallback
+      // handle (number). Both are cancelled by the same APIs.
+      const video = videoRef.current;
+      if (video && "cancelVideoFrameCallback" in video) {
+        video.cancelVideoFrameCallback(rafRef.current);
+      } else {
+        clearInterval(rafRef.current);
+      }
       rafRef.current = null;
     }
   }, []);
@@ -48,30 +70,55 @@ export function H264Debugger() {
     const video = videoRef.current;
     if (!video) return;
 
-    const probe = () => {
-      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        frameCountRef.current += 1;
-        setFrameCount(frameCountRef.current);
-        setLastFrame(new Date().toLocaleTimeString());
-        setDimensions(`${video.videoWidth || "—"} × ${video.videoHeight || "—"}`);
-      }
-      rafRef.current = requestAnimationFrame(probe);
-    };
-    rafRef.current = requestAnimationFrame(probe);
+    // ponytail: use requestVideoFrameCallback when available — it fires on
+    // actual decoded frames, not a fixed timer. Falls back to setInterval for
+    // browsers without it (Safari < 14). The 1s interval was missing frames
+    // on deployment because readyState check can fall between frame intervals.
+    const hasRVFC = "requestVideoFrameCallback" in HTMLVideoElement.prototype;
+    if (hasRVFC) {
+      const onFrame = () => {
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          frameCountRef.current += 1;
+          setFrameCount(frameCountRef.current);
+          setLastFrame(new Date().toLocaleTimeString());
+          setDimensions(`${video.videoWidth || "—"} × ${video.videoHeight || "—"}`);
+        }
+        rafRef.current = video.requestVideoFrameCallback(onFrame);
+      };
+      rafRef.current = video.requestVideoFrameCallback(onFrame);
+    } else {
+      rafRef.current = window.setInterval(() => {
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          frameCountRef.current += 1;
+          setFrameCount(frameCountRef.current);
+          setLastFrame(new Date().toLocaleTimeString());
+          setDimensions(`${video.videoWidth || "—"} × ${video.videoHeight || "—"}`);
+        }
+      }, 1000);
+    }
   }, [stopFrameProbe]);
 
   const attachRemoteVideo = useCallback(
-    (track: RemoteTrack) => {
+    (track: RemoteTrack, publication?: RemoteTrackPublication) => {
       if (!videoRef.current) return;
+      // ponytail: pin max quality + FPS so the SFU doesn't throttle this subscriber
+      // on slow links. The ESP32 publishes a single-layer H.264 stream at 1 FPS;
+      // without this, LiveKit's congestion control drops frames to 1/5–1/10 FPS.
+      if (publication) {
+        publication.setVideoQuality(VideoQuality.HIGH);
+        publication.setVideoFPS(1);
+      }
       track.attach(videoRef.current);
       setTrackState("H.264 track attached");
       setMessage("Receiving encoded video from LiveKit");
+      log(`track attached: ${track.sid} (${track.source})`);
       startFrameProbe();
     },
-    [startFrameProbe],
+    [log, startFrameProbe],
   );
 
   const disconnect = useCallback(async () => {
+    log("stopping receiver");
     stopFrameProbe();
     videoRef.current?.pause();
     videoRef.current?.removeAttribute("src");
@@ -81,7 +128,8 @@ export function H264Debugger() {
     setStatus("idle");
     setTrackState("waiting for remote video");
     setMessage("No receiver attached");
-  }, [stopFrameProbe]);
+    log("disconnected");
+  }, [log, stopFrameProbe]);
 
   const connect = useCallback(async () => {
     if (roomRef.current || !roomName.trim()) return;
@@ -90,6 +138,7 @@ export function H264Debugger() {
     setTrackState("joining room");
     setFrameCount(0);
     frameCountRef.current = 0;
+    log(`joining room "${roomName.trim()}"`);
 
     try {
       const response = await fetch("/api/token", {
@@ -98,24 +147,28 @@ export function H264Debugger() {
         body: JSON.stringify({ room_name: roomName.trim(), identity: MONITOR_IDENTITY }),
       });
       if (!response.ok) throw new Error(`token route ${response.status}`);
+      log(`token route ${response.status}`);
 
       const { server_url: serverUrl, token } = await response.json();
       const room = new Room({ adaptiveStream: false, dynacast: false });
       roomRef.current = room;
 
-      room.on(RoomEvent.TrackSubscribed, (track, _publication, _participant) => {
+      room.on(RoomEvent.TrackSubscribed, (track, publication) => {
         if (track.kind === Track.Kind.Video) {
-          attachRemoteVideo(track as RemoteTrack);
+          log(`subscribed: ${track.sid} video`);
+          attachRemoteVideo(track as RemoteTrack, publication as RemoteTrackPublication);
         }
       });
       room.on(RoomEvent.TrackUnsubscribed, (track) => {
         if (track.kind === Track.Kind.Video) {
+          log(`unsubscribed: ${track.sid} video`);
           if (videoRef.current) track.detach(videoRef.current);
           stopFrameProbe();
           setTrackState("remote video detached");
         }
       });
       room.on(RoomEvent.Disconnected, () => {
+        log("room disconnected");
         roomRef.current = null;
         setStatus("idle");
         setTrackState("waiting for remote video");
@@ -126,20 +179,28 @@ export function H264Debugger() {
       setStatus("connected");
       setMessage(`Listening to ${room.name}`);
       setTrackState("connected; waiting for video track");
+      log(`connected to room "${room.name}"`);
+      log(
+        `remote participants: ${Array.from(room.remoteParticipants.keys()).join(", ") || "none"}`,
+      );
 
       for (const publication of room.remoteParticipants.values()) {
         for (const remotePublication of publication.trackPublications.values()) {
           if (remotePublication.track && remotePublication.kind === Track.Kind.Video) {
-            attachRemoteVideo(remotePublication.track as RemoteTrack);
+            attachRemoteVideo(
+              remotePublication.track as RemoteTrack,
+              remotePublication as RemoteTrackPublication,
+            );
           }
         }
       }
     } catch (error) {
+      log(`error: ${error instanceof Error ? error.message : String(error)}`);
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "Unable to connect");
       roomRef.current = null;
     }
-  }, [attachRemoteVideo, roomName, stopFrameProbe]);
+  }, [attachRemoteVideo, log, roomName, stopFrameProbe]);
 
   useEffect(() => {
     return () => {
@@ -151,45 +212,37 @@ export function H264Debugger() {
   const connected = status === "connected";
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[#090a09] text-[#f4f1e7]">
-      <div className="pointer-events-none fixed inset-0 opacity-30 [background-image:linear-gradient(rgba(255,255,255,.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.035)_1px,transparent_1px)] [background-size:42px_42px]" />
-      <div className="relative mx-auto max-w-7xl px-5 py-6 sm:px-8 sm:py-10">
-        <header className="mb-10 flex flex-col gap-6 border-b border-[#343731] pb-7 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <Link
-              href="/debugging"
-              className="font-mono text-[11px] uppercase tracking-[0.24em] text-[#a4ad91] hover:text-[#d8e7b6]"
-            >
-              ← back to device lab
-            </Link>
-            <p className="mt-7 font-mono text-xs uppercase tracking-[0.32em] text-[#d8e7b6]">
-              Memora / media lab 04
-            </p>
-            <h1 className="mt-3 max-w-3xl text-4xl font-semibold tracking-[-0.045em] text-[#f4f1e7] sm:text-6xl">
-              H.264 signal scope
-            </h1>
-            <p className="mt-4 max-w-xl text-sm leading-6 text-[#a7aaa0]">
-              A dedicated receiver for the physical ESP32 track. This page never enables the browser
-              camera or microphone; it only subscribes to LiveKit.
-            </p>
-          </div>
-          <div className="flex items-center gap-3 self-start sm:self-auto">
-            <span
-              className={`h-2 w-2 rounded-full ${status === "connected" ? "bg-[#c8f36a] shadow-[0_0_14px_#c8f36a]" : status === "error" ? "bg-[#ff735c]" : "bg-[#777d6f]"}`}
-            />
-            <span className="font-mono text-xs tracking-[0.2em] text-[#d6d8cb]">
-              {statusLabel(status)}
-            </span>
-          </div>
-        </header>
+    <div className="space-y-6 p-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <Link
+            href="/debugging"
+            className="font-mono text-xs uppercase tracking-widest text-ink-500 hover:text-accent-500"
+          >
+            ← back to device lab
+          </Link>
+          <h1 className="mt-2 text-2xl font-semibold text-neutral-900">H.264 Signal Scope</h1>
+          <p className="mt-1 text-sm text-neutral-600">
+            A dedicated receiver for the physical ESP32 track. This page never enables the browser
+            camera or microphone; it only subscribes to LiveKit.
+          </p>
+        </div>
+        <Badge
+          variant={connected ? "ok" : status === "error" ? "crit" : "default"}
+          className="self-start sm:self-auto"
+        >
+          {statusLabel(status)}
+        </Badge>
+      </div>
 
-        <section className="grid gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(290px,.7fr)]">
-          <div className="border border-[#454b3e] bg-[#111410] p-3 shadow-[0_22px_80px_rgba(0,0,0,.35)] sm:p-5">
-            <div className="mb-4 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.22em] text-[#87917a]">
-              <span>remote video / decode surface</span>
-              <span className="text-[#c8f36a]">{connected ? "live" : "offline"}</span>
-            </div>
-            <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-[#050605] ring-1 ring-inset ring-[#2f362d]">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(290px,.7fr)]">
+        <Card>
+          <CardHeader
+            title="Remote Video"
+            subtitle={`LiveKit decode surface · ${connected ? "live" : "offline"}`}
+          />
+          <CardBody>
+            <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg bg-ink-900 ring-1 ring-inset ring-ink-700">
               <video
                 ref={videoRef}
                 autoPlay
@@ -198,31 +251,34 @@ export function H264Debugger() {
                 className="h-full w-full object-contain"
               />
               {!connected || frameCount === 0 ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#050605]/85 text-center">
-                  <div className="h-10 w-10 rounded-full border border-[#536149] border-t-[#c8f36a] animate-spin" />
-                  <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#a7aaa0]">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-lg bg-ink-900/85 text-center">
+                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-ink-600 border-t-accent-500" />
+                  <p className="font-mono text-xs uppercase tracking-widest text-ink-500">
                     {trackState}
                   </p>
                 </div>
               ) : null}
-              <div className="absolute left-4 top-4 flex items-center gap-2 bg-[#090a09]/80 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-[#c8f36a]">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#c8f36a]" /> decoded
+              <div className="absolute left-4 top-4 flex items-center gap-2 rounded bg-ink-900/80 px-2 py-1 font-mono text-xs uppercase tracking-widest text-accent-500">
+                <span className="h-1.5 w-1.5 rounded-full bg-accent-500" /> decoded
               </div>
-              <span className="absolute bottom-3 right-3 bg-[#090a09]/80 px-2 py-1 font-mono text-[10px] text-[#a7aaa0]">
+              <span className="absolute bottom-3 right-3 rounded bg-ink-900/80 px-2 py-1 font-mono text-xs text-ink-500">
                 {dimensions}
               </span>
             </div>
-            <p className="mt-4 font-mono text-xs text-[#8f9688]">{message}</p>
-          </div>
+            <p className="mt-3 font-mono text-xs text-ink-500">{message}</p>
+          </CardBody>
+        </Card>
 
-          <aside className="flex flex-col border border-[#343b31] bg-[#0e110e] p-5">
-            <div className="mb-8">
-              <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-[#87917a]">
-                Receiver controls
-              </p>
+        <Card>
+          <CardHeader
+            title="Receiver Controls"
+            subtitle={`subscriber identity: ${MONITOR_IDENTITY}`}
+          />
+          <CardBody className="flex flex-col gap-6">
+            <div>
               <label
-                className="mt-5 block font-mono text-[10px] uppercase tracking-[0.18em] text-[#a7aaa0]"
                 htmlFor="room-name"
+                className="block font-mono text-xs uppercase tracking-widest text-ink-500"
               >
                 LiveKit room
               </label>
@@ -231,71 +287,69 @@ export function H264Debugger() {
                 value={roomName}
                 onChange={(event) => setRoomName(event.target.value)}
                 disabled={status === "connecting" || connected}
-                className="mt-2 w-full border border-[#485145] bg-[#171b16] px-3 py-3 font-mono text-sm text-[#f4f1e7] outline-none transition focus:border-[#c8f36a] disabled:opacity-50"
+                className="mt-2 w-full rounded-lg border border-ink-600 bg-ink-800 px-3 py-2 font-mono text-sm text-neutral-900 outline-none transition focus:border-accent-500 disabled:opacity-50"
               />
-              <p className="mt-2 font-mono text-[10px] leading-5 text-[#727a6e]">
-                subscriber identity: {MONITOR_IDENTITY}
-              </p>
             </div>
 
-            <div className="mb-8 grid grid-cols-2 gap-px border border-[#343b31] bg-[#343b31]">
-              <div className="bg-[#111410] p-4">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-[#727a6e]">
+            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-ink-700 bg-ink-700">
+              <div className="bg-ink-800 p-4">
+                <p className="font-mono text-xs uppercase tracking-widest text-ink-500">
                   frames seen
                 </p>
-                <p className="mt-2 text-2xl font-semibold text-[#c8f36a]">{frameCount}</p>
+                <p className="mt-1 text-2xl font-semibold text-accent-500">{frameCount}</p>
               </div>
-              <div className="bg-[#111410] p-4">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-[#727a6e]">
+              <div className="bg-ink-800 p-4">
+                <p className="font-mono text-xs uppercase tracking-widest text-ink-500">
                   last frame
                 </p>
-                <p className="mt-2 truncate font-mono text-sm text-[#f4f1e7]">{lastFrame}</p>
+                <p className="mt-1 truncate font-mono text-sm text-neutral-700">{lastFrame}</p>
               </div>
             </div>
 
-            <div className="space-y-4 border-l border-[#46523d] pl-4 font-mono text-xs">
+            <div className="space-y-4 border-l border-ink-700 pl-4 font-mono text-sm">
               <div>
-                <span className="text-[#727a6e]">01 / signaling</span>
-                <p className="mt-1 text-[#c8f36a]">
+                <span className="text-ink-500">01 / signaling</span>
+                <p className="mt-1 text-neutral-700">
                   {status === "idle" ? "not started" : "LiveKit connected"}
                 </p>
               </div>
               <div>
-                <span className="text-[#727a6e]">02 / subscription</span>
-                <p className="mt-1 text-[#c8f36a]">{trackState}</p>
+                <span className="text-ink-500">02 / subscription</span>
+                <p className="mt-1 text-neutral-700">{trackState}</p>
               </div>
               <div>
-                <span className="text-[#727a6e]">03 / browser decode</span>
-                <p className="mt-1 text-[#c8f36a]">
+                <span className="text-ink-500">03 / browser decode</span>
+                <p className="mt-1 text-neutral-700">
                   {frameCount > 0 ? "frames advancing" : "awaiting frames"}
                 </p>
               </div>
             </div>
 
-            <div className="mt-auto flex gap-2 pt-10">
-              <button
+            <div className="mt-auto flex gap-2 pt-2">
+              <Button
+                variant="primary"
                 onClick={() => void connect()}
                 disabled={connected || status === "connecting" || !roomName.trim()}
-                className="flex-1 bg-[#c8f36a] px-4 py-3 font-mono text-xs font-bold uppercase tracking-[0.14em] text-[#11150d] transition hover:bg-[#ddff91] disabled:cursor-not-allowed disabled:opacity-35"
+                className="flex-1"
               >
                 {status === "connecting" ? "Joining…" : "Attach receiver"}
-              </button>
-              <button
-                onClick={() => void disconnect()}
-                disabled={!connected && status !== "error"}
-                className="border border-[#4b5547] px-4 py-3 font-mono text-xs uppercase tracking-[0.14em] text-[#d0d5c9] transition hover:border-[#c8f36a] disabled:cursor-not-allowed disabled:opacity-35"
-              >
+              </Button>
+              <Button onClick={() => void disconnect()} disabled={!connected && status !== "error"}>
                 Stop
-              </button>
+              </Button>
             </div>
-          </aside>
-        </section>
-
-        <footer className="mt-8 flex flex-col gap-2 border-t border-[#343731] pt-5 font-mono text-[10px] uppercase tracking-[0.16em] text-[#727a6e] sm:flex-row sm:justify-between">
-          <span>source: video-bridge / codec: H.264 / transport: WebRTC</span>
-          <span>diagnostic view · no local capture</span>
-        </footer>
+          </CardBody>
+        </Card>
       </div>
-    </main>
+
+      <Card>
+        <CardHeader title="Receiver Log" subtitle={`${logs.length} line(s)`} />
+        <CardBody>
+          <pre className="h-52 overflow-auto font-mono text-xs leading-5 text-ink-500">
+            {logs.length ? logs.join("\n") : "no events logged yet"}
+          </pre>
+        </CardBody>
+      </Card>
+    </div>
   );
 }

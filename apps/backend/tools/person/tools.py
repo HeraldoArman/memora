@@ -65,9 +65,10 @@ async def get_person(args: dict, ctx: ToolContext) -> dict:
 async def search_person_by_face(args: dict, ctx: ToolContext) -> dict:
     """Identify the currently visible person via the face index.
 
-    Uses the latest face observation's embedding from Working Memory (the recognizer already
-    ran). If no face observation is available, returns unknown.
+    Runs InsightFace on the latest video frame on-demand (not continuously).
+    If no frame is available or no face is detected, returns unknown.
     """
+    await ctx.refresh_face()
     emb = ctx.current_face_embedding()
     if emb is None:
         return {"person_id": None, "known": False, "possible": False, "note": "no face detected"}
@@ -104,12 +105,13 @@ async def register_person(args: dict, ctx: ToolContext) -> dict:
 async def register_face(args: dict, ctx: ToolContext) -> dict:
     """Link the currently visible face to an existing person (enroll identity).
 
-    Uses the latest face embedding from Working Memory (the recognizer already ran). The
-    person must already exist (register_person first). FaceRepository.register is sync.
+    Runs InsightFace on the latest video frame on-demand to get a fresh embedding.
+    The person must already exist (register_person first). FaceRepository.register is sync.
     """
     person_id = args.get("person_id")
     if not person_id:
         return {"error": "person_id required"}
+    await ctx.refresh_face()
     emb = ctx.current_face_embedding()
     if emb is None:
         return {"person_id": person_id, "enrolled": False, "note": "no face detected"}

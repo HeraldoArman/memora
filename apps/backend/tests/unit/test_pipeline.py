@@ -123,9 +123,7 @@ class TestConsolidator:
         # non-person entities upserted
         cats = [a.kwargs["category"] for a in c.knowledge_service.upsert_entity.await_args_list]
         assert "Preference" in cats  # sushi(Food) → Preference graph category
-        # episodic message + facts persisted
-        c.memory_service.add_message.assert_awaited_once()
-        assert c.memory_service.add_message.await_args.kwargs["content"] == "I'm Asep"
+        # facts persisted (message persistence moved to gateway, not the consolidator)
         c.memory_service.add_facts.assert_awaited_once()
 
     async def test_no_session_no_episode(self) -> None:
@@ -136,7 +134,7 @@ class TestConsolidator:
             "relationships": [],
         }
         await c.consolidate(extraction, content="x", session_id=None)
-        c.memory_service.add_message.assert_not_called()
+        c.memory_service.add_facts.assert_not_called()
 
     async def test_relationship_subject_not_in_entities(self) -> None:
         c = self._cons()

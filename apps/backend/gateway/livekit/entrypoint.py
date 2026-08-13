@@ -27,6 +27,17 @@ log = logging.getLogger(__name__)
 
 BRIDGE_IDENTITY_PREFIX = "memora-video-bridge-"
 
+# ponytail: track video-loop tasks so we can cancel them on teardown.
+# Without this they outlive session.aclose(), hit the shut-down executor, and spam
+# "Executor shutdown has been called" errors.
+_video_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_video_task(coro: asyncio.coroutines) -> None:
+    task = asyncio.create_task(coro)
+    _video_tasks.add(task)
+    task.add_done_callback(_video_tasks.discard)
+
 
 async def entrypoint(ctx: JobContext) -> None:
     """Per-room job: build AgentSession with Gemini RealtimeModel."""
@@ -113,9 +124,14 @@ async def entrypoint(ctx: JobContext) -> None:
 
     text_index = TextMemoryIndex(dim=3072)
 
-    from pipeline.runner import PipelineRunner
+    _pipeline = None
+    if settings.pipeline_enabled:
+        from pipeline.runner import PipelineRunner
 
-    _pipeline = PipelineRunner(text_embedder=text_embedder, text_index=text_index)
+        _pipeline = PipelineRunner(text_embedder=text_embedder, text_index=text_index)
+        log.info("extraction pipeline enabled")
+    else:
+        log.warning("extraction pipeline disabled by PIPELINE_ENABLED=false")
 
     # ponytail: debounce + serialize extraction. Every user turn fires create_task
     # concurrently — 5 parallel Gemini calls starve the event loop and delay audio.
@@ -128,6 +144,8 @@ async def entrypoint(ctx: JobContext) -> None:
     _extract_pending: list[str] = []
 
     async def _on_extract(text: str, sid: str | None) -> None:
+        if _pipeline is None:
+            return
         log.info("on_extract triggered: text=%r sid=%s", text[:200], sid)
         try:
             await _pipeline.run(text, session_id=sid)
@@ -138,6 +156,8 @@ async def entrypoint(ctx: JobContext) -> None:
     def _schedule_extract(sid: str | None) -> None:
         """Debounce extraction: batch rapid turns, run once 2s after the last."""
         nonlocal _extract_timer
+        if _pipeline is None:
+            return
         if _extract_timer is not None:
             _extract_timer.cancel()
         loop = _asyncio.get_event_loop()
@@ -174,6 +194,18 @@ async def entrypoint(ctx: JobContext) -> None:
     context_engine = ContextEngine(retriever=retriever)
     log.info("context engine created (retriever with text embedder + index)")
 
+    # Gemini 3.1 only accepts instructions during initial session setup. Build the
+    # retrieval package here so it becomes part of the model's initial instructions.
+    initial_context = None
+    if settings.gemini_live_model.startswith("gemini-3.1-"):
+        try:
+            _pkg, initial_context = await context_engine.build()
+            log.info("Gemini 3.1 initial context built (%d chars)", len(initial_context))
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "Gemini 3.1 initial context build failed; starting without it", exc_info=True
+            )
+
     # --- Create proactive planner (Step 4) ---
     from reasoning.planner.planner import ProactivePlanner
 
@@ -191,10 +223,11 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     agent = MemoraAgent(
         tool_ctx=tool_ctx,
-        on_extract=_on_extract,
+        on_extract=_on_extract if _pipeline is not None else None,
         context_engine=context_engine,
         planner=planner,
         on_log=agent_log.emit,
+        initial_context=initial_context,
     )
     log.info("MemoraAgent created")
 
@@ -243,6 +276,8 @@ async def entrypoint(ctx: JobContext) -> None:
                     log.info("display.show → publishing %d chars to topic=display", len(text))
                     asyncio.create_task(display.show(text))
                     asyncio.create_task(agent_log.emit("assistant", text))
+                    if session_id:
+                        asyncio.create_task(_persist_message(session_id, "assistant", text))
                 else:
                     log.debug("assistant message has no text content, skipping display")
             # Extraction + periodic context refresh: fire on user messages (turn boundary)
@@ -252,6 +287,8 @@ async def entrypoint(ctx: JobContext) -> None:
                     log.info("user turn detected, queuing extraction: %r", text[:200])
                     _extract_pending.append(text)
                     _schedule_extract(session_id)
+                    if session_id:
+                        asyncio.create_task(_persist_message(session_id, "user", text))
                     _user_turn_count += 1
                     if _user_turn_count % _CONTEXT_REFRESH_INTERVAL == 0:
                         log.info("turn %d → refreshing context", _user_turn_count)
@@ -260,6 +297,18 @@ async def entrypoint(ctx: JobContext) -> None:
                     log.debug("user message has no text content, skipping extraction")
         except Exception:  # noqa: BLE001
             log.debug("conversation_item_added parse failed", exc_info=True)
+
+    async def _persist_message(sid: str, role: str, content: str) -> None:
+        """Persist a turn to episodic memory (conversation_messages)."""
+        from uuid import UUID
+
+        from services import MemoryService
+
+        try:
+            await MemoryService().add_message(session_id=UUID(sid), role=role, content=content)
+            log.info("persisted %s message: %r", role, content[:80])
+        except Exception:  # noqa: BLE001
+            log.warning("message persist failed (role=%s): %s", role, exc_info=True)
 
     # --- Wire track handlers for InsightFace (video only) ---
     @room.on("track_subscribed")
@@ -280,7 +329,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 "spawning video loop for InsightFace (track from %s)",
                 participant.identity,
             )
-            asyncio.create_task(
+            _spawn_video_task(
                 handle_video_track(track, room, tool_ctx, scene_understander, obs_engine)
             )
         elif publication.kind == rtc.TrackKind.KIND_AUDIO:
@@ -319,7 +368,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 pub.set_subscribed(True)
             if pub.subscribed and pub.track and pub.kind == rtc.TrackKind.KIND_VIDEO:
                 log.info("spawning video loop for existing video track from %s", p.identity)
-                asyncio.create_task(
+                _spawn_video_task(
                     handle_video_track(pub.track, room, tool_ctx, scene_understander, obs_engine)
                 )
 
@@ -331,6 +380,14 @@ async def entrypoint(ctx: JobContext) -> None:
         log.info("data_received: topic=%r len=%d from=%s", topic, len(data), packet.participant)
         if topic == "prompt":
             text = data.decode("utf-8", errors="replace")
+            if settings.gemini_live_model.startswith("gemini-3.1-"):
+                log.warning("prompt dropped: Gemini 3.1 does not support generate_reply()")
+                asyncio.create_task(
+                    agent_log.emit(
+                        "system", "Prompt ignored: Gemini 3.1 supports voice turns only."
+                    )
+                )
+                return
             log.info(
                 "prompt received: %r — generating reply via session.generate_reply", text[:200]
             )
@@ -375,6 +432,12 @@ async def entrypoint(ctx: JobContext) -> None:
         log.info("job cancelled for room %s", room.name)
     finally:
         log.info("closing AgentSession for room %s...", room.name)
+        for t in list(_video_tasks):
+            t.cancel()
+        if _video_tasks:
+            await asyncio.gather(*_video_tasks, return_exceptions=True)
+            log.info("video-loop tasks cancelled (%d)", len(_video_tasks))
+            _video_tasks.clear()
         await planner.stop()
         log.info("proactive planner stopped")
         await obs_engine.stop()

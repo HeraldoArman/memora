@@ -11,10 +11,11 @@ idf_component_register(
     INCLUDE_DIRS "."
     REQUIRES
         driver
-        esp_camera
+        esp32-camera
         esp_capture
         esp_event
         esp_http_client
+        mbedtls
         esp_netif
         esp_wifi
         json

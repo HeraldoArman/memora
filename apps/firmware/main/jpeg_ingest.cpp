@@ -1,9 +1,12 @@
 #include "jpeg_ingest.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
+#include "driver/i2c_master.h"
 #include "esp_camera.h"
+#include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -16,7 +19,30 @@ namespace {
 constexpr char kTag[] = "memora-jpeg";
 constexpr int kCaptureIntervalMs = 1000;
 constexpr int kHttpPostTimeoutMs = 3000;
-constexpr int kMaxJpegBytes = 300 * 1024;
+constexpr int kMaxJpegBytes = 600 * 1000;
+
+static i2c_master_bus_handle_t s_camera_sccb_bus = nullptr;
+
+static bool init_camera_sccb_bus() {
+    i2c_master_bus_config_t bus_config = {};
+    bus_config.i2c_port = memora::hardware::kCameraSccbI2cPort;
+    bus_config.sda_io_num = memora::hardware::kCameraSda;
+    bus_config.scl_io_num = memora::hardware::kCameraScl;
+    bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
+    bus_config.glitch_ignore_cnt = 7;
+    bus_config.flags.enable_internal_pullup = true;
+
+    const esp_err_t err = i2c_new_master_bus(&bus_config, &s_camera_sccb_bus);
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag, "camera SCCB bus init failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    ESP_LOGI(kTag, "camera SCCB bus ready on I2C port=%d SDA=%d SCL=%d",
+             static_cast<int>(memora::hardware::kCameraSccbI2cPort),
+             static_cast<int>(memora::hardware::kCameraSda),
+             static_cast<int>(memora::hardware::kCameraScl));
+    return true;
+}
 
 static camera_config_t make_camera_config() {
     camera_config_t config = {};
@@ -25,8 +51,11 @@ static camera_config_t make_camera_config() {
     config.pin_pwdn = -1;
     config.pin_reset = -1;
     config.pin_xclk = static_cast<int>(memora::hardware::kCameraXclk);
-    config.pin_sccb_sda = static_cast<int>(memora::hardware::kCameraSda);
-    config.pin_sccb_scl = static_cast<int>(memora::hardware::kCameraScl);
+    // The OLED owns I2C port 1. Create the camera bus explicitly on port 0
+    // above and tell esp32-camera to reuse it instead of installing its
+    // default direct-pin SCCB bus (which is also port 1 in this build).
+    config.pin_sccb_sda = -1;
+    config.pin_sccb_scl = -1;
     config.pin_d0 = static_cast<int>(memora::hardware::kCameraY2);
     config.pin_d1 = static_cast<int>(memora::hardware::kCameraY3);
     config.pin_d2 = static_cast<int>(memora::hardware::kCameraY4);
@@ -40,7 +69,7 @@ static camera_config_t make_camera_config() {
     config.pin_pclk = static_cast<int>(memora::hardware::kCameraPclk);
     config.sccb_i2c_port = memora::hardware::kCameraSccbI2cPort;
     config.xclk_freq_hz = 10000000;
-    config.frame_size = FRAMESIZE_VGA;
+    config.frame_size = FRAMESIZE_XGA;
     config.pixel_format = PIXFORMAT_JPEG;
     config.jpeg_quality = 12;
     config.fb_count = 2;
@@ -75,6 +104,7 @@ static bool post_jpeg(const uint8_t* data, size_t len, int width, int height,
     config.url = CONFIG_MEMORA_INGEST_URL;
     config.method = HTTP_METHOD_POST;
     config.timeout_ms = kHttpPostTimeoutMs;
+    config.crt_bundle_attach = esp_crt_bundle_attach;
     config.event_handler = on_http_event;
     config.buffer_size = 512;
     config.buffer_size_tx = 4096;
@@ -138,13 +168,33 @@ static TaskHandle_t s_task = nullptr;
 namespace memora::jpeg {
 
 bool init() {
+    if (!init_camera_sccb_bus()) {
+        return false;
+    }
+
     auto config = make_camera_config();
     const esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
         ESP_LOGE(kTag, "esp_camera_init failed: %s", esp_err_to_name(err));
         return false;
     }
-    ESP_LOGI(kTag, "OV3660 JPEG camera ready: 640x480 quality=12 PSRAM");
+
+    sensor_t* sensor = esp_camera_sensor_get();
+    if (sensor == nullptr || sensor->set_hmirror == nullptr || sensor->set_vflip == nullptr) {
+        ESP_LOGE(kTag, "OV3660 orientation controls are unavailable");
+        esp_camera_deinit();
+        return false;
+    }
+    const int mirror_result = sensor->set_hmirror(sensor, 1);
+    const int flip_result = sensor->set_vflip(sensor, 1);
+    if (mirror_result != 0 || flip_result != 0) {
+        ESP_LOGE(kTag, "OV3660 180-degree rotation failed: mirror=%d flip=%d",
+                 mirror_result, flip_result);
+        esp_camera_deinit();
+        return false;
+    }
+    ESP_LOGI(kTag, "OV3660 JPEG camera ready: 1024x768 quality=12 PSRAM");
+    ESP_LOGI(kTag, "OV3660 image rotated 180 degrees (hmirror=1, vflip=1)");
     return true;
 }
 

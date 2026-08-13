@@ -24,14 +24,16 @@ from livekit.agents import AgentServer, cli
 
 from config.logging import setup_logging
 from gateway.livekit.entrypoint import entrypoint
+from gateway.livekit.minimal_entrypoint import minimal_entrypoint
 
 log = logging.getLogger(__name__)
 
 _settings = get_settings()
-log.info("worker registering agent_name=%s", _settings.agent_name)
+_entrypoint = minimal_entrypoint if _settings.agent_mode == "minimal" else entrypoint
+log.info("worker registering agent_name=%s mode=%s", _settings.agent_name, _settings.agent_mode)
 
 server = AgentServer()
-server.rtc_session(entrypoint, agent_name=_settings.agent_name)
+server.rtc_session(_entrypoint, agent_name=_settings.agent_name)
 
 
 class _HealthHandler(BaseHTTPRequestHandler):
@@ -52,7 +54,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
 
 def _start_health_server(port: int) -> None:
-    srv = HTTPServer(("127.0.0.1", port), _HealthHandler)
+    srv = HTTPServer(("0.0.0.0", port), _HealthHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     log.info("worker health check on http://127.0.0.1:%d/health", port)
 

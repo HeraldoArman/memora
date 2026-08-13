@@ -47,13 +47,18 @@ class ToolContext:
     event_service: EventService = field(default_factory=EventService)
     shopping_service: ShoppingService = field(default_factory=ShoppingService)
 
-    # refactor/bare-minimum: direct face result from the video loop — no observation
-    # engine, no working memory, no 1s fusion window. The video loop writes:
+    # refactor/bare-minimum: direct face result from on-demand ONNX (refresh_face).
     #   {"embedding": np.ndarray, "person_id": str|None, "name": str|None,
     #    "score": float, "is_known": bool, "is_possible": bool}
-    # Tools read from this dict directly. Re-enable observation engine by replacing
-    # this with current_context (CurrentContext from WorkingMemory).
     last_face: dict | None = None
+
+    # Latest raw video frame (BGR np.ndarray HxWx3 uint8). Written by the video
+    # loop every frame; read by refresh_face() only when a tool needs identity.
+    last_frame: object = None  # np.ndarray | None
+
+    # Lazy FaceRecognizer singleton — used by refresh_face(). Kept on ToolContext
+    # so the ONNX model persists across tool calls (no reload per call).
+    _face_recognizer: object = None  # FaceRecognizer | None
 
     # Step 3: direct scene result from the video loop — SceneUnderstander writes:
     #   {"location": str|None, "objects": list[str], "activity": str|None,
@@ -85,9 +90,37 @@ class ToolContext:
             self.person_service = PersonService(face_repo=self.face_repo)
 
     def cache_unknown_embedding(self, embedding) -> None:
-        """Called by the video loop when an unknown face is detected."""
+        """Called when an unknown face is detected during refresh_face."""
         self._last_unknown_embedding = embedding
         self._unknown_embedding_deadline = time.monotonic() + self.UNKNOWN_EMBEDDING_TTL_S
+
+    async def refresh_face(self) -> None:
+        """Run InsightFace on the latest video frame → write to last_face.
+
+        Called on-demand by tools (search_person_by_face, visible_people) so ONNX
+        inference runs only when the agent asks "who is this?" — not 30x/minute on
+        every frame. Offloaded to a thread so the asyncio event loop (audio pump)
+        is never blocked.
+        """
+        import asyncio
+
+        frame = self.last_frame
+        if frame is None:
+            return
+        if self._face_recognizer is None:
+            from perception.face.recognizer import FaceRecognizer
+
+            self._face_recognizer = FaceRecognizer()
+        recognizer = self._face_recognizer
+        faces = await asyncio.to_thread(recognizer.detect_and_embed, frame)
+        if not faces:
+            self.last_face = None
+            return
+        detected = faces[0]
+        # FAISS lookup + graph name resolution (reuses existing _update_last_face logic)
+        from gateway.livekit.track_handler import _update_last_face
+
+        await _update_last_face(detected, self)
 
     def current_face_embedding(self):
         """Return the latest face embedding from last_face, or fall back to cache."""
