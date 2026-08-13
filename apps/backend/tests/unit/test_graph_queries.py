@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from graph.queries import (
     GET_PERSON,
+    LIST_PEOPLE,
     RELATED_PEOPLE,
     SEARCH_ENTITY,
     SEARCH_PREFERENCES,
@@ -40,6 +41,10 @@ class TestStaticQueries:
     def test_search_entity_case_insensitive(self) -> None:
         assert "toLower(n.name) CONTAINS toLower($q)" in SEARCH_ENTITY
         assert "LIMIT $limit" in SEARCH_ENTITY
+
+    def test_list_people_only_returns_person_nodes(self) -> None:
+        assert "MATCH (p:Person)" in LIST_PEOPLE
+        assert "ORDER BY p.updated_at DESC" in LIST_PEOPLE
 
     def test_search_preferences(self) -> None:
         assert "-[:LIKES|DISLIKES]->" in SEARCH_PREFERENCES

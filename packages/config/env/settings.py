@@ -37,10 +37,10 @@ class Settings(BaseSettings):
     # === Gemini (required) ===
     gemini_api_key: str
     gemini_live_model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
-    gemini_text_model: str = "gemini-2.5-flash"
+    gemini_text_model: str = "gemini-flash-latest"
     gemini_embedding_model: str = "gemini-embedding-001"
     # ponytail: shared timeout for all non-live Gemini calls (extraction, summarizer, embeddings)
-    gemini_http_timeout_ms: int = 15000
+    gemini_http_timeout_ms: int = 60000
     # Comma-separated function names withheld from new Gemini Live sessions.
     # Reconnect the client after changing this value; Live tool declarations are immutable.
     gemini_live_disabled_tools: str = ""

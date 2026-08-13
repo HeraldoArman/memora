@@ -83,6 +83,12 @@ class KnowledgeGraphRepo:
             result = await s.execute_read(_search_entity_tx, q=query, limit=limit)
             return [dict(r) for r in result]
 
+    async def list_people(self, limit: int = 100) -> list[dict]:
+        """Return Person nodes without sharing the general entity-search cap."""
+        async with neo4j_client.get_driver().session() as s:
+            result = await s.execute_read(_list_people_tx, limit=limit)
+            return [dict(r) for r in result]
+
     async def entity_relationships(self, entity: str) -> dict:
         async with neo4j_client.get_driver().session() as s:
             result = await s.execute_read(
@@ -149,6 +155,11 @@ async def _run_read_tx(tx, *, cypher, **params):
 
 async def _search_entity_tx(tx, *, q, limit):
     result = await tx.run(queries.SEARCH_ENTITY, q=q, limit=limit)
+    return [r async for r in result]
+
+
+async def _list_people_tx(tx, *, limit):
+    result = await tx.run(queries.LIST_PEOPLE, limit=limit)
     return [r async for r in result]
 
 

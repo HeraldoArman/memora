@@ -16,12 +16,9 @@ router = APIRouter()
 async def list_persons(request: Request) -> list[dict]:
     """List all Person nodes from Neo4j, enriched with face capture counts from
     Postgres (FaceEmbedding rows per person_id)."""
-    kg = graph_repo.KnowledgeGraphRepo()
     person_repo = graph_repo.PersonRepo()
 
-    # Search all Person nodes — empty query matches everything (CONTAINS "" is true).
-    persons = await kg.search_entity("", limit=100)
-    persons = [p for p in persons if p.get("label") == "Person"]
+    persons = await graph_repo.KnowledgeGraphRepo().list_people(limit=100)
 
     # Count face captures per person_id from Postgres
     capture_counts: dict[str, int] = {}

@@ -83,6 +83,15 @@ LIMIT $limit
 """
 
 
+LIST_PEOPLE = """
+MATCH (p:Person)
+WHERE p.name IS NOT NULL
+RETURN p.name AS name, p.person_id AS person_id
+ORDER BY p.updated_at DESC
+LIMIT $limit
+"""
+
+
 # Subgraph within N hops of an entity name. $hops is an int literal (code constant).
 # collect(DISTINCT m) keeps neighbor nodes in scope; rels is a list-of-lists (one per path)
 # flattened in the RETURN via reduce. The center node n is always included (prepended to

@@ -18,6 +18,7 @@ type ConnectionStatus = "idle" | "connecting" | "connected" | "error";
 
 const DEFAULT_ROOM = "memora-test";
 const MONITOR_IDENTITY = "h264-monitor";
+const AGENT_LOG_TOPIC = "agent_log";
 
 function statusLabel(status: ConnectionStatus): string {
   switch (status) {
@@ -167,6 +168,20 @@ export function H264Debugger() {
           setTrackState("remote video detached");
         }
       });
+      room.on(
+        RoomEvent.DataReceived,
+        (payload: Uint8Array, _participant: unknown, _kind: unknown, topic?: string) => {
+          if (topic !== AGENT_LOG_TOPIC) return;
+
+          const text = new TextDecoder().decode(payload);
+          try {
+            const event = JSON.parse(text) as { kind?: string; text?: string };
+            log(`[agent:${event.kind ?? "log"}] ${event.text ?? text}`);
+          } catch {
+            log(`[agent] ${text}`);
+          }
+        },
+      );
       room.on(RoomEvent.Disconnected, () => {
         log("room disconnected");
         roomRef.current = null;
@@ -343,7 +358,7 @@ export function H264Debugger() {
       </div>
 
       <Card>
-        <CardHeader title="Receiver Log" subtitle={`${logs.length} line(s)`} />
+        <CardHeader title="Receiver And Agent Log" subtitle={`${logs.length} line(s)`} />
         <CardBody>
           <pre className="h-52 overflow-auto font-mono text-xs leading-5 text-ink-500">
             {logs.length ? logs.join("\n") : "no events logged yet"}
