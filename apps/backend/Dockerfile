@@ -37,6 +37,7 @@ COPY --from=builder --chown=nonroot:nonroot /app /app
 # so retry hard and make the fetch non-fatal: if it still fails, InsightFace downloads
 # the weights itself on first init at runtime (needs network there).
 RUN apt-get update && apt-get install -y --no-install-recommends unzip ca-certificates curl \
+    libxcb1 libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /app/models/insightface/models \
     && ( curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors --connect-timeout 30 --max-time 300 \
