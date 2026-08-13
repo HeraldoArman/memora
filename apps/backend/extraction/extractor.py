@@ -8,6 +8,7 @@ Falls back to an empty result if the API is unavailable (graceful degradation).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -29,9 +30,13 @@ class KnowledgeExtractor:
         if self._client is not None:
             return self._client
         from google import genai
+        from google.genai import types
 
         settings = get_settings()
-        self._client = genai.Client(api_key=settings.gemini_api_key)
+        self._client = genai.Client(
+            api_key=settings.gemini_api_key,
+            http_options=types.HttpOptions(timeout=settings.gemini_http_timeout_ms),
+        )
         return self._client
 
     async def extract(self, content: str) -> dict:
@@ -39,6 +44,12 @@ class KnowledgeExtractor:
 
         Empty/whitespace content → empty extraction (no API call).
         On API failure → empty extraction (logged), so the pipeline keeps running.
+
+        ponytail: runs the sync generate_content inside asyncio.to_thread so the
+        HTTP request + JSON parsing never touches the event loop. The async client
+        (client.aio) still does HTTP I/O on the event loop between await points,
+        which interleaves with the Gemini Realtime WebSocket and causes 1011 errors
+        under load. The sync client in a thread is fully isolated.
         """
         if not content or not content.strip():
             return _empty()
@@ -48,7 +59,8 @@ class KnowledgeExtractor:
         prompt = EXTRACTION_PROMPT.format(content=content)
         try:
             client = self._get_client()
-            resp = await client.aio.models.generate_content(
+            resp = await asyncio.to_thread(
+                client.models.generate_content,
                 model=settings.gemini_text_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(

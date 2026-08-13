@@ -21,8 +21,8 @@ export default function MemoriesPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-semibold">Memories</h1>
-        <p className="mt-1 text-sm text-neutral-400">
+        <h1 className="text-2xl font-semibold text-neutral-900">Memories</h1>
+        <p className="mt-1 text-sm text-neutral-600">
           Extracted facts from conversations — the relational long-term store.
         </p>
       </div>
@@ -41,7 +41,7 @@ export default function MemoriesPage() {
           {loading ? (
             <div className="space-y-2">
               {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="h-16 animate-pulse rounded-md bg-ink-800/50" />
+                <div key={i} className="h-16 animate-pulse rounded-lg bg-ink-800" />
               ))}
             </div>
           ) : memories.length === 0 ? (
@@ -49,9 +49,9 @@ export default function MemoriesPage() {
           ) : (
             <ul className="space-y-2">
               {memories.map((m) => (
-                <li key={m.id} className="rounded-md border border-ink-700 bg-ink-800/30 px-4 py-3">
+                <li key={m.id} className="rounded-lg border border-ink-700 bg-ink-800/60 px-4 py-3">
                   <div className="flex items-start justify-between gap-4">
-                    <p className="text-sm text-neutral-200">{m.fact}</p>
+                    <p className="text-sm text-neutral-800">{m.fact}</p>
                     <div className="flex shrink-0 items-center gap-2">
                       {m.category && <Badge variant="info">{m.category}</Badge>}
                       {m.confidence != null && (

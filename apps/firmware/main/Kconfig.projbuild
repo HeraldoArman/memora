@@ -1,0 +1,41 @@
+menu "Memora firmware"
+
+config MEMORA_WIFI_SSID
+    string "Wi-Fi SSID"
+    default ""
+
+config MEMORA_WIFI_PASSWORD
+    string "Wi-Fi password"
+    default ""
+
+config MEMORA_LIVEKIT_SERVER_URL
+    string "LiveKit server URL"
+    default "wss://"
+
+config MEMORA_TOKEN_URL
+    string "Dashboard token endpoint URL"
+    default "http://192.168.1.100:3000/api/token"
+    help
+        HTTP POST endpoint exposed by the dashboard. It mints a LiveKit join
+        token and dispatches the backend agent for the requested room.
+
+config MEMORA_LIVEKIT_TOKEN
+    string "Fallback pre-generated LiveKit token"
+    default ""
+
+config MEMORA_LIVEKIT_ROOM
+    string "LiveKit room"
+    default "memora-test"
+
+config MEMORA_LIVEKIT_IDENTITY
+    string "LiveKit participant identity"
+    default "memora-device"
+
+config MEMORA_INGEST_URL
+    string "Backend video ingest URL"
+    default "http://192.168.1.100:8000/api/media/video/frame"
+    help
+        HTTP POST endpoint on the backend Video Bridge. The ESP sends
+        raw JPEG frames here (Content-Type: image/jpeg) at 1 FPS.
+
+endmenu

@@ -7,6 +7,7 @@ the live session stays focused on reasoning + audio. Output → SceneObservation
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from env import get_settings
@@ -15,8 +16,6 @@ from prompts import SCENE_PROMPT
 from schemas import SCENE_SCHEMA
 
 log = logging.getLogger(__name__)
-
-_HTTP_TIMEOUT_S = 15
 
 
 class SceneUnderstander:
@@ -32,9 +31,10 @@ class SceneUnderstander:
         from google.genai import types
 
         # timeout: a hung Gemini call should fail fast, not orphan a background task
+        settings = get_settings()
         self._client = genai.Client(
-            api_key=get_settings().gemini_api_key,
-            http_options=types.HttpOptions(timeout=_HTTP_TIMEOUT_S * 1000),
+            api_key=settings.gemini_api_key,
+            http_options=types.HttpOptions(timeout=settings.gemini_http_timeout_ms),
         )
         return self._client
 
@@ -50,7 +50,8 @@ class SceneUnderstander:
         settings = get_settings()
         try:
             client = self._get_client()
-            resp = await client.aio.models.generate_content(
+            resp = await asyncio.to_thread(
+                client.models.generate_content,
                 model=settings.gemini_text_model,
                 contents=[
                     types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"),

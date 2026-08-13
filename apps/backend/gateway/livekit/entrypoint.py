@@ -25,6 +25,8 @@ from tools import ToolContext
 
 log = logging.getLogger(__name__)
 
+BRIDGE_IDENTITY_PREFIX = "memora-video-bridge-"
+
 
 async def entrypoint(ctx: JobContext) -> None:
     """Per-room job: build AgentSession with Gemini RealtimeModel."""
@@ -109,19 +111,51 @@ async def entrypoint(ctx: JobContext) -> None:
 
     from vector.text_index import TextMemoryIndex
 
-    text_index = TextMemoryIndex(dim=768)
+    text_index = TextMemoryIndex(dim=3072)
+
+    from pipeline.runner import PipelineRunner
+
+    _pipeline = PipelineRunner(text_embedder=text_embedder, text_index=text_index)
+
+    # ponytail: debounce + serialize extraction. Every user turn fires create_task
+    # concurrently — 5 parallel Gemini calls starve the event loop and delay audio.
+    # Debounce: wait 2s after the last user turn before extracting (rapid turns merge).
+    # Serialize: an asyncio.Lock ensures only one extraction runs at a time.
+    import asyncio as _asyncio
+
+    _extract_lock = _asyncio.Lock()
+    _extract_timer: _asyncio.TimerHandle | None = None
+    _extract_pending: list[str] = []
 
     async def _on_extract(text: str, sid: str | None) -> None:
         log.info("on_extract triggered: text=%r sid=%s", text[:200], sid)
         try:
-            from pipeline.runner import PipelineRunner
-
-            await PipelineRunner(text_embedder=text_embedder, text_index=text_index).run(
-                text, session_id=sid
-            )
+            await _pipeline.run(text, session_id=sid)
             log.info("extraction pipeline completed")
         except Exception:  # noqa: BLE001
             log.warning("extraction failed: %s", exc_info=True)
+
+    def _schedule_extract(sid: str | None) -> None:
+        """Debounce extraction: batch rapid turns, run once 2s after the last."""
+        nonlocal _extract_timer
+        if _extract_timer is not None:
+            _extract_timer.cancel()
+        loop = _asyncio.get_event_loop()
+        _extract_timer = loop.call_later(3.0, _fire_extract, sid)
+
+    def _fire_extract(sid: str | None) -> None:
+        nonlocal _extract_timer
+        _extract_timer = None
+        if not _extract_pending:
+            return
+        # Merge all pending turns into one extraction call
+        merged = " ".join(_extract_pending)
+        _extract_pending.clear()
+        _asyncio.create_task(_run_serial_extract(merged, sid))
+
+    async def _run_serial_extract(text: str, sid: str | None) -> None:
+        async with _extract_lock:
+            await _on_extract(text, sid)
 
     # --- Create display ---
     display = Display(room)
@@ -215,8 +249,9 @@ async def entrypoint(ctx: JobContext) -> None:
             if item.role == "user":
                 text = item.text_content or ""
                 if text:
-                    log.info("user turn detected, triggering extraction: %r", text[:200])
-                    asyncio.create_task(_on_extract(text, session_id))
+                    log.info("user turn detected, queuing extraction: %r", text[:200])
+                    _extract_pending.append(text)
+                    _schedule_extract(session_id)
                     _user_turn_count += 1
                     if _user_turn_count % _CONTEXT_REFRESH_INTERVAL == 0:
                         log.info("turn %d → refreshing context", _user_turn_count)
@@ -241,7 +276,10 @@ async def entrypoint(ctx: JobContext) -> None:
             participant.identity,
         )
         if publication.kind == rtc.TrackKind.KIND_VIDEO:
-            log.info("spawning video loop for InsightFace (track from %s)", participant.identity)
+            log.info(
+                "spawning video loop for InsightFace (track from %s)",
+                participant.identity,
+            )
             asyncio.create_task(
                 handle_video_track(track, room, tool_ctx, scene_understander, obs_engine)
             )
@@ -297,6 +335,9 @@ async def entrypoint(ctx: JobContext) -> None:
                 "prompt received: %r — generating reply via session.generate_reply", text[:200]
             )
             asyncio.create_task(agent_log.emit("user", f"[prompt] {text}"))
+            # Debounced extraction for prompt turns (same as spoken turns)
+            _extract_pending.append(text)
+            _schedule_extract(session_id)
             try:
                 session.generate_reply(instructions=text)
             except RuntimeError:

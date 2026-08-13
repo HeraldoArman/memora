@@ -20,8 +20,8 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-semibold">Settings</h1>
-        <p className="mt-1 text-sm text-neutral-400">
+        <h1 className="text-2xl font-semibold text-neutral-900">Settings</h1>
+        <p className="mt-1 text-sm text-neutral-600">
           Runtime key-value configuration from Postgres.
         </p>
       </div>
@@ -32,7 +32,7 @@ export default function SettingsPage() {
           {loading ? (
             <div className="space-y-2">
               {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="h-10 animate-pulse rounded-md bg-ink-800/50" />
+                <div key={i} className="h-10 animate-pulse rounded-lg bg-ink-800" />
               ))}
             </div>
           ) : Object.keys(settings).length === 0 ? (
@@ -51,11 +51,11 @@ export default function SettingsPage() {
               </thead>
               <tbody>
                 {Object.entries(settings).map(([key, value]) => (
-                  <tr key={key} className="border-b border-ink-800 last:border-0">
+                  <tr key={key} className="border-b border-ink-700 last:border-0">
                     <td className="px-3 py-2">
                       <Badge variant="info">{key}</Badge>
                     </td>
-                    <td className="px-3 py-2 font-mono text-sm text-neutral-300">{value}</td>
+                    <td className="px-3 py-2 font-mono text-sm text-neutral-700">{value}</td>
                   </tr>
                 ))}
               </tbody>

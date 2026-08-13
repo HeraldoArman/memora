@@ -7,7 +7,7 @@ No live API: genai.Client is mocked. FAISS runs in-process (faiss-cpu).
 from __future__ import annotations
 
 import tempfile
-from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -54,16 +54,16 @@ class TestTextEmbedder:
         assert await emb.embed("   ") is None
 
     async def test_api_failure(self) -> None:
-        client = AsyncMock()
-        client.aio.models.embed_content = AsyncMock(side_effect=RuntimeError("api down"))
+        client = MagicMock()
+        client.models.embed_content = MagicMock(side_effect=RuntimeError("api down"))
         emb = TextEmbedder(client=client)
         assert await emb.embed("hello") is None
 
     async def test_happy_path(self) -> None:
         emb_obj = type("E", (), {"values": [1.0, 0.0, 0.0, 0.0]})()
         resp = type("R", (), {"embeddings": [emb_obj]})()
-        client = AsyncMock()
-        client.aio.models.embed_content = AsyncMock(return_value=resp)
+        client = MagicMock()
+        client.models.embed_content = MagicMock(return_value=resp)
         emb = TextEmbedder(client=client)
         vec = await emb.embed("hello")
         assert vec is not None
@@ -78,8 +78,8 @@ class TestTextEmbedder:
         e1 = type("E", (), {"values": [1.0, 0.0]})()
         e2 = type("E", (), {"values": [0.0, 1.0]})()
         resp = type("R", (), {"embeddings": [e1, e2]})()
-        client = AsyncMock()
-        client.aio.models.embed_content = AsyncMock(return_value=resp)
+        client = MagicMock()
+        client.models.embed_content = MagicMock(return_value=resp)
         emb = TextEmbedder(client=client)
         vecs = await emb.embed_batch(["hello", "world"])
         assert len(vecs) == 2

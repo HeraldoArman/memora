@@ -29,10 +29,10 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="flex h-full w-56 flex-col border-r border-ink-700 bg-ink-900">
-      <div className="flex h-14 items-center gap-2 border-b border-ink-700 px-5">
-        <div className="size-6 rounded bg-accent-500" />
-        <span className="font-mono text-sm font-bold tracking-widest">MEMORA</span>
+    <aside className="flex h-full w-56 flex-col border-r border-accent-500/20 bg-gradient-to-b from-accent-500 to-accent-600">
+      <div className="flex h-14 items-center gap-2 border-b border-white/10 px-5">
+        <div className="size-6 rounded-lg bg-white" />
+        <span className="font-mono text-sm font-bold tracking-widest text-white">MEMORA</span>
       </div>
       <nav className="flex-1 space-y-1 p-3">
         {nav.map((item) => {
@@ -43,10 +43,10 @@ export function Sidebar() {
               key={item.href}
               href={item.href}
               className={cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 active
-                  ? "bg-ink-800 text-accent-400"
-                  : "text-neutral-400 hover:bg-ink-800/50 hover:text-neutral-100",
+                  ? "bg-white text-accent-600"
+                  : "text-white/80 hover:bg-white/10 hover:text-white",
               )}
             >
               <Icon className="size-4 shrink-0" />
@@ -55,8 +55,8 @@ export function Sidebar() {
           );
         })}
       </nav>
-      <div className="border-t border-ink-700 p-3">
-        <div className="rounded-md bg-ink-850 px-3 py-2 font-mono text-xs text-ink-500">
+      <div className="border-t border-white/10 p-3">
+        <div className="rounded-lg bg-white/10 px-3 py-2 font-mono text-xs text-white/70">
           v0.1.0 — caregiver
         </div>
       </div>

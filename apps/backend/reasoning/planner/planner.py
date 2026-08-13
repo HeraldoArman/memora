@@ -8,13 +8,13 @@ pending reminders + shopping list items, and if a match is found, injects a text
 instruction into the Gemini Live session via send_text(). The model then generates
 the spoken reminder.
 
-Also: proactively asks "Siapa ini?" when an unknown person is visible AND the user
-is talking (speech in current context). This is a programmatic trigger — the system
-prompt also instructs the model to ask, but the planner guarantees it fires even
-if the model doesn't notice. Cooldown prevents nagging.
+The "Siapa ini?" unknown-person trigger was removed: it fired on a 30s/2min timer
+and interrupted the user mid-conversation. Face registration is now user-driven —
+the system prompt asks "Siapa ini?" only when the user engages with an unknown
+person, not on a timer.
 
 Cooldown: each (reminder_id, location) pair only fires once per cooldown window
-(default 5 min) so we don't nag. The "Siapa ini?" trigger has its own cooldown key.
+(default 5 min) so we don't nag.
 """
 
 from __future__ import annotations
@@ -32,8 +32,6 @@ log = logging.getLogger(__name__)
 
 _DEFAULT_INTERVAL_S = 30.0
 _DEFAULT_COOLDOWN_S = 300.0
-_UNKNOWN_PERSON_COOLDOWN_S = 120.0  # don't re-ask "Siapa ini?" within 2 min
-_UNKNOWN_PERSON_KEY = "__unknown_person__"
 _SEMANTIC_THRESHOLD = 0.5  # cosine similarity for location→item matching
 
 
@@ -63,11 +61,6 @@ class ProactivePlanner:
         """Return a proactive prompt string if a match is found, else None."""
         if current is None:
             return None
-
-        # 0. Unknown person + speech → ask "Siapa ini?" (programmatic trigger)
-        prompt = self._check_unknown_person(current)
-        if prompt:
-            return prompt
 
         if not current.scene:
             return None
@@ -145,28 +138,6 @@ class ProactivePlanner:
         except Exception:  # noqa: BLE001
             log.warning("planner: semantic match failed", exc_info=True)
             return None
-
-    def _check_unknown_person(self, current: CurrentContext) -> str | None:
-        """Fire 'Siapa ini?' when an unknown person is visible and the user is talking.
-
-        This is the primary defense for the 24/7 glasses plot hole: user meets someone
-        they know but the glasses don't recognise them, and they start talking. Without
-        this trigger, facts from the conversation get orphaned (linked to no person).
-        The prompt asks the model to ask who this person is so they can be registered.
-        """
-        has_unknown = "Orang tidak dikenali" in current.visible_people
-        has_speech = bool(current.speech and current.speech.strip())
-        if not has_unknown or not has_speech:
-            return None
-        if not self._should_fire(
-            _UNKNOWN_PERSON_KEY, _UNKNOWN_PERSON_KEY, cooldown=_UNKNOWN_PERSON_COOLDOWN_S
-        ):
-            return None
-        self._mark_fired(_UNKNOWN_PERSON_KEY, _UNKNOWN_PERSON_KEY)
-        return _build_prompt(
-            "Pengguna sedang berbicara dengan orang yang tidak dikenali. "
-            "Tanyakan dengan hangat: 'Siapa ini?' lalu daftarkan nama dan hubungannya."
-        )
 
     def start(
         self,
@@ -287,33 +258,6 @@ def _self_check() -> None:  # pragma: no cover
         result4 = await planner.check(ctx2)
         assert result4 is not None, "expected fire after cooldown"
 
-        # Unknown person + speech → "Siapa ini?" trigger
-        ctx3 = CurrentContext(
-            visible_people=["Orang tidak dikenali"], speech="apa makanan favoritmu?"
-        )
-        result5 = await planner.check(ctx3)
-        assert result5 is not None and "Siapa ini" in result5, result5
-
-        # No speech → no trigger (user not talking yet)
-        ctx4 = CurrentContext(visible_people=["Orang tidak dikenali"], speech=None)
-        result6 = await planner.check(ctx4)
-        assert result6 is None, f"expected None without speech: {result6}"
-
-        # Known person → no trigger
-        ctx5 = CurrentContext(visible_people=["Asep"], speech="halo")
-        result7 = await planner.check(ctx5)
-        assert result7 is None or "Siapa ini" not in (result7 or ""), result7
-
-        # Cooldown: re-ask within 2 min → None
-        C.t = 210.0
-        result8 = await planner.check(ctx3)
-        assert result8 is None, f"expected None during unknown-person cooldown: {result8}"
-
-        # After unknown-person cooldown (2 min) → fires again
-        C.t = 400.0
-        result9 = await planner.check(ctx3)
-        assert result9 is not None and "Siapa ini" in result9, result9
-
         # --- Semantic matching (text_embedder wired) ---
         # "apotek" vs "beli paracetamol" — no keyword overlap, but semantically close
         class _FakeEmbedder:
@@ -345,7 +289,7 @@ def _self_check() -> None:  # pragma: no cover
         assert result_sem is not None and "paracetamol" in result_sem, result_sem
 
     asyncio.run(_run())
-    print("planner self-check OK: keyword + semantic match, cooldown, unknown-person trigger")
+    print("planner self-check OK: keyword + semantic match, cooldown")
 
 
 if __name__ == "__main__":  # pragma: no cover

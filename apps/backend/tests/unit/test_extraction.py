@@ -7,7 +7,6 @@ client: happy path, empty-content short-circuit, and API-failure graceful degrad
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock
 
 import pytest
 from env import get_settings
@@ -144,7 +143,7 @@ class TestExtractorParse:
 
 class _FakeModels:
     def __init__(self, client) -> None:
-        self.generate_content = AsyncMock(side_effect=client._generate)
+        self.generate_content = client._generate  # sync callable (asyncio.to_thread wraps it)
 
 
 class _FakeClient:
@@ -153,11 +152,11 @@ class _FakeClient:
         self.error = error
         self.calls: list[str] = []
         models = _FakeModels(self)
-        self.aio = type("Aio", (), {"models": models})()
+        self.models = models  # sync path (client.models.generate_content)
         # keep a direct handle for assertions
         self.generate_content = models.generate_content
 
-    async def _generate(self, model, contents, config=None):
+    def _generate(self, model, contents, config=None):
         self.calls.append(model)
         if self.error:
             raise self.error

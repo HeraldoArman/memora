@@ -10,6 +10,7 @@ entirely (most turns are short). Only call Gemini when genuinely over budget.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from env import get_settings
@@ -33,9 +34,13 @@ class Summarizer:
         if self._client is not None:
             return self._client
         from google import genai
+        from google.genai import types
 
         settings = get_settings()
-        self._client = genai.Client(api_key=settings.gemini_api_key)
+        self._client = genai.Client(
+            api_key=settings.gemini_api_key,
+            http_options=types.HttpOptions(timeout=settings.gemini_http_timeout_ms),
+        )
         return self._client
 
     def needs_summary(self, text: str) -> bool:
@@ -48,7 +53,8 @@ class Summarizer:
         try:
             client = self._get_client()
             settings = get_settings()
-            resp = await client.aio.models.generate_content(
+            resp = await asyncio.to_thread(
+                client.models.generate_content,
                 model=settings.gemini_text_model,
                 contents=SUMMARIZATION_PROMPT.format(content=text),
             )

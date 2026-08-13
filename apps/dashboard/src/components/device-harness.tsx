@@ -175,8 +175,8 @@ export function DeviceHarness() {
     <main className="mx-auto max-w-5xl space-y-6 p-6">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Memora — Dummy Device</h1>
-          <p className="text-sm text-neutral-400">
+          <h1 className="text-xl font-semibold text-neutral-900">Memora — Dummy Device</h1>
+          <p className="text-sm text-neutral-600">
             Impersonates the ESP32-S3 glasses over LiveKit.
           </p>
         </div>
@@ -190,14 +190,14 @@ export function DeviceHarness() {
             <button
               onClick={connect}
               disabled={status === "connected" || status === "connecting" || !workerReady}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-40"
+              className="rounded-lg bg-accent-500 px-4 py-2 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-40"
             >
               {workerReady ? "Connect" : "Waiting for worker…"}
             </button>
             <button
               onClick={disconnect}
               disabled={status !== "connected"}
-              className="rounded-lg bg-neutral-700 px-4 py-2 text-sm font-medium hover:bg-neutral-600 disabled:opacity-40"
+              className="rounded-lg border border-ink-700 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-ink-800 disabled:opacity-40"
             >
               Disconnect
             </button>
@@ -215,8 +215,8 @@ export function DeviceHarness() {
 
       <ConnectionLog logs={logs} />
 
-      <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
-        <h2 className="mb-3 text-sm font-medium text-neutral-300">Send prompt to agent</h2>
+      <section className="rounded-xl border border-ink-700 bg-ink-850 p-4 shadow-sm">
+        <h2 className="mb-3 text-sm font-medium text-neutral-700">Send prompt to agent</h2>
         <div className="flex gap-2">
           <input
             type="text"
@@ -233,7 +233,7 @@ export function DeviceHarness() {
               }
             }}
             placeholder="e.g. tulis tes"
-            className="flex-1 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-white placeholder:text-neutral-500"
+            className="flex-1 rounded-lg border border-ink-700 bg-ink-800 px-3 py-2 text-sm text-neutral-900 placeholder:text-ink-500 focus:border-accent-500 focus:outline-none"
           />
           <button
             onClick={() => {
@@ -246,7 +246,7 @@ export function DeviceHarness() {
               setPrompt("");
             }}
             disabled={!prompt.trim() || status !== "connected"}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-40"
+            className="rounded-lg bg-accent-500 px-4 py-2 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-40"
           >
             Send
           </button>

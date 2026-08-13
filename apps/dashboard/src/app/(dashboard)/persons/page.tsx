@@ -22,8 +22,8 @@ export default function PersonsPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-semibold">Persons</h1>
-        <p className="mt-1 text-sm text-neutral-400">
+        <h1 className="text-2xl font-semibold text-neutral-900">Persons</h1>
+        <p className="mt-1 text-sm text-neutral-600">
           Face recognition registry — known people linked in the Neo4j graph.
         </p>
       </div>
@@ -39,14 +39,14 @@ export default function PersonsPage() {
       {loading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-32 animate-pulse rounded-lg bg-ink-800/50" />
+            <div key={i} className="h-32 animate-pulse rounded-xl bg-ink-800" />
           ))}
         </div>
       ) : persons.length === 0 ? (
         <Card>
           <CardBody>
             <div className="flex flex-col items-center gap-3 py-12">
-              <Users className="size-10 text-ink-600" />
+              <Users className="size-10 text-accent-500/40" />
               <p className="text-sm text-ink-500">No persons registered yet.</p>
             </div>
           </CardBody>
@@ -58,7 +58,7 @@ export default function PersonsPage() {
               <CardBody>
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="text-lg font-medium text-neutral-100">{p.name}</p>
+                    <p className="text-lg font-medium text-neutral-900">{p.name}</p>
                     {p.person_id && (
                       <p className="mt-0.5 font-mono text-xs text-ink-500">{p.person_id}</p>
                     )}
@@ -67,7 +67,7 @@ export default function PersonsPage() {
                     {p.capture_count} captures
                   </Badge>
                 </div>
-                {p.notes && <p className="mt-2 text-sm text-neutral-400">{p.notes}</p>}
+                {p.notes && <p className="mt-2 text-sm text-neutral-600">{p.notes}</p>}
               </CardBody>
             </Card>
           ))}
