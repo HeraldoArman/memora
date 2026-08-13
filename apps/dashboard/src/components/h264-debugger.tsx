@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Room, RoomEvent, Track, type RemoteTrack } from "livekit-client";
+import {
+  Room,
+  RoomEvent,
+  Track,
+  VideoQuality,
+  type RemoteTrack,
+  type RemoteTrackPublication,
+} from "livekit-client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -46,7 +53,14 @@ export function H264Debugger() {
 
   const stopFrameProbe = useCallback(() => {
     if (rafRef.current !== null) {
-      clearInterval(rafRef.current);
+      // rafRef holds either a setInterval ID (number) or a requestVideoFrameCallback
+      // handle (number). Both are cancelled by the same APIs.
+      const video = videoRef.current;
+      if (video && "cancelVideoFrameCallback" in video) {
+        video.cancelVideoFrameCallback(rafRef.current);
+      } else {
+        clearInterval(rafRef.current);
+      }
       rafRef.current = null;
     }
   }, []);
@@ -56,21 +70,44 @@ export function H264Debugger() {
     const video = videoRef.current;
     if (!video) return;
 
-    // ponytail: 1s interval matches the ESP32's 1 FPS capture rate.
-    // requestAnimationFrame (60fps) would inflate the frame counter.
-    rafRef.current = window.setInterval(() => {
-      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        frameCountRef.current += 1;
-        setFrameCount(frameCountRef.current);
-        setLastFrame(new Date().toLocaleTimeString());
-        setDimensions(`${video.videoWidth || "—"} × ${video.videoHeight || "—"}`);
-      }
-    }, 1000);
+    // ponytail: use requestVideoFrameCallback when available — it fires on
+    // actual decoded frames, not a fixed timer. Falls back to setInterval for
+    // browsers without it (Safari < 14). The 1s interval was missing frames
+    // on deployment because readyState check can fall between frame intervals.
+    const hasRVFC = "requestVideoFrameCallback" in HTMLVideoElement.prototype;
+    if (hasRVFC) {
+      const onFrame = () => {
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          frameCountRef.current += 1;
+          setFrameCount(frameCountRef.current);
+          setLastFrame(new Date().toLocaleTimeString());
+          setDimensions(`${video.videoWidth || "—"} × ${video.videoHeight || "—"}`);
+        }
+        rafRef.current = video.requestVideoFrameCallback(onFrame);
+      };
+      rafRef.current = video.requestVideoFrameCallback(onFrame);
+    } else {
+      rafRef.current = window.setInterval(() => {
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          frameCountRef.current += 1;
+          setFrameCount(frameCountRef.current);
+          setLastFrame(new Date().toLocaleTimeString());
+          setDimensions(`${video.videoWidth || "—"} × ${video.videoHeight || "—"}`);
+        }
+      }, 1000);
+    }
   }, [stopFrameProbe]);
 
   const attachRemoteVideo = useCallback(
-    (track: RemoteTrack) => {
+    (track: RemoteTrack, publication?: RemoteTrackPublication) => {
       if (!videoRef.current) return;
+      // ponytail: pin max quality + FPS so the SFU doesn't throttle this subscriber
+      // on slow links. The ESP32 publishes a single-layer H.264 stream at 1 FPS;
+      // without this, LiveKit's congestion control drops frames to 1/5–1/10 FPS.
+      if (publication) {
+        publication.setVideoQuality(VideoQuality.HIGH);
+        publication.setVideoFPS(1);
+      }
       track.attach(videoRef.current);
       setTrackState("H.264 track attached");
       setMessage("Receiving encoded video from LiveKit");
@@ -116,10 +153,10 @@ export function H264Debugger() {
       const room = new Room({ adaptiveStream: false, dynacast: false });
       roomRef.current = room;
 
-      room.on(RoomEvent.TrackSubscribed, (track, _publication, _participant) => {
+      room.on(RoomEvent.TrackSubscribed, (track, publication) => {
         if (track.kind === Track.Kind.Video) {
           log(`subscribed: ${track.sid} video`);
-          attachRemoteVideo(track as RemoteTrack);
+          attachRemoteVideo(track as RemoteTrack, publication as RemoteTrackPublication);
         }
       });
       room.on(RoomEvent.TrackUnsubscribed, (track) => {
@@ -150,7 +187,10 @@ export function H264Debugger() {
       for (const publication of room.remoteParticipants.values()) {
         for (const remotePublication of publication.trackPublications.values()) {
           if (remotePublication.track && remotePublication.kind === Track.Kind.Video) {
-            attachRemoteVideo(remotePublication.track as RemoteTrack);
+            attachRemoteVideo(
+              remotePublication.track as RemoteTrack,
+              remotePublication as RemoteTrackPublication,
+            );
           }
         }
       }
