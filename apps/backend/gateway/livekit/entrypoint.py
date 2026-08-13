@@ -27,6 +27,17 @@ log = logging.getLogger(__name__)
 
 BRIDGE_IDENTITY_PREFIX = "memora-video-bridge-"
 
+# ponytail: track video-loop tasks so we can cancel them on teardown.
+# Without this they outlive session.aclose(), hit the shut-down executor, and spam
+# "Executor shutdown has been called" errors.
+_video_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_video_task(coro: asyncio.coroutines) -> None:
+    task = asyncio.create_task(coro)
+    _video_tasks.add(task)
+    task.add_done_callback(_video_tasks.discard)
+
 
 async def entrypoint(ctx: JobContext) -> None:
     """Per-room job: build AgentSession with Gemini RealtimeModel."""
@@ -296,7 +307,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 "spawning video loop for InsightFace (track from %s)",
                 participant.identity,
             )
-            asyncio.create_task(
+            _spawn_video_task(
                 handle_video_track(track, room, tool_ctx, scene_understander, obs_engine)
             )
         elif publication.kind == rtc.TrackKind.KIND_AUDIO:
@@ -335,7 +346,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 pub.set_subscribed(True)
             if pub.subscribed and pub.track and pub.kind == rtc.TrackKind.KIND_VIDEO:
                 log.info("spawning video loop for existing video track from %s", p.identity)
-                asyncio.create_task(
+                _spawn_video_task(
                     handle_video_track(pub.track, room, tool_ctx, scene_understander, obs_engine)
                 )
 
@@ -391,6 +402,12 @@ async def entrypoint(ctx: JobContext) -> None:
         log.info("job cancelled for room %s", room.name)
     finally:
         log.info("closing AgentSession for room %s...", room.name)
+        for t in list(_video_tasks):
+            t.cancel()
+        if _video_tasks:
+            await asyncio.gather(*_video_tasks, return_exceptions=True)
+            log.info("video-loop tasks cancelled (%d)", len(_video_tasks))
+            _video_tasks.clear()
         await planner.stop()
         log.info("proactive planner stopped")
         await obs_engine.stop()

@@ -108,8 +108,11 @@ class MemoraAgent(Agent):
                 log.warning(
                     "on_enter: context build failed, keeping static instructions", exc_info=True
                 )
-        await self.session.generate_reply(instructions=greeting)
-        log.info("on_enter: greeting generated")
+        try:
+            await self.session.generate_reply(instructions=greeting)
+            log.info("on_enter: greeting generated")
+        except RuntimeError:
+            log.warning("on_enter: session already closing, skipping greeting")
 
         if self._planner is not None:
             self._planner.start(self._get_context, self._on_proactive)
