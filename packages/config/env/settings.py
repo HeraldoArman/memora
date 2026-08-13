@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import socket
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -40,6 +41,13 @@ class Settings(BaseSettings):
     gemini_embedding_model: str = "gemini-embedding-001"
     # ponytail: shared timeout for all non-live Gemini calls (extraction, summarizer, embeddings)
     gemini_http_timeout_ms: int = 15000
+    # Comma-separated function names withheld from new Gemini Live sessions.
+    # Reconnect the client after changing this value; Live tool declarations are immutable.
+    gemini_live_disabled_tools: str = ""
+    # Temporary latency-isolation switch. Prevents per-turn extraction and consolidation.
+    pipeline_enabled: bool = True
+    # `minimal` starts an audio-only Gemini session with no Memora background systems.
+    agent_mode: Literal["full", "minimal"] = "full"
 
     # === Postgres (required) ===
     database_url: str

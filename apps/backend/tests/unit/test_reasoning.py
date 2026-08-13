@@ -14,6 +14,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
+import pytest
+
 from reasoning.agent.agent import MemoraAgent
 from reasoning.prompts.system import build_system_instruction
 from reasoning.response.display import _MAX_PAYLOAD, Display
@@ -47,6 +49,16 @@ class TestSystemPrompt:
 
 
 class TestMemoraAgent:
+    @pytest.fixture(autouse=True)
+    def _use_gemini_25(self, monkeypatch):
+        """Most agent behavior tests exercise the Gemini 2.5 generate_reply path."""
+        monkeypatch.setenv("GEMINI_LIVE_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
+        from env import get_settings
+
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
     def test_construct_agent(self) -> None:
         ctx = ToolContext()
         agent = MemoraAgent(tool_ctx=ctx)
@@ -113,6 +125,22 @@ class TestMemoraAgent:
         try:
             await agent.on_enter()
             mock_session.generate_reply.assert_awaited_once()
+        finally:
+            del type(agent).session
+
+    async def test_gemini_31_skips_greeting_and_context(self, monkeypatch) -> None:
+        monkeypatch.setenv("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")
+        from env import get_settings
+
+        get_settings.cache_clear()
+        engine = AsyncMock()
+        agent = MemoraAgent(tool_ctx=ToolContext(), context_engine=engine)
+        mock_session = AsyncMock()
+        type(agent).session = PropertyMock(return_value=mock_session)
+        try:
+            await agent.on_enter()
+            engine.build.assert_not_awaited()
+            mock_session.generate_reply.assert_not_awaited()
         finally:
             del type(agent).session
 
@@ -183,6 +211,30 @@ class TestMemoraAgent:
         declared_names = {d["name"] for d in ALL_FUNCTION_DECLARATIONS}
         tool_names = {t.info.name for t in agent.tools}
         assert tool_names == declared_names
+
+    def test_disabled_tools_are_not_bound(self, monkeypatch) -> None:
+        monkeypatch.setenv("GEMINI_LIVE_DISABLED_TOOLS", "search_person, search_memory")
+        from env import get_settings
+
+        get_settings.cache_clear()
+        try:
+            agent = MemoraAgent(tool_ctx=ToolContext())
+            tool_names = {tool.info.name for tool in agent.tools}
+            assert "search_person" not in tool_names
+            assert "search_memory" not in tool_names
+        finally:
+            get_settings.cache_clear()
+
+    def test_unknown_disabled_tool_fails_fast(self, monkeypatch) -> None:
+        monkeypatch.setenv("GEMINI_LIVE_DISABLED_TOOLS", "not_a_tool")
+        from env import get_settings
+
+        get_settings.cache_clear()
+        try:
+            with pytest.raises(ValueError, match="unknown tool"):
+                MemoraAgent(tool_ctx=ToolContext())
+        finally:
+            get_settings.cache_clear()
 
     async def test_tool_dispatch_known_tool(self) -> None:
         """A generated tool should dispatch to the registry callable."""

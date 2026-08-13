@@ -44,10 +44,11 @@ class MemoraAgent(Agent):
         on_log: Callable[[str, str], Awaitable[None]] | None = None,
         llm: google.realtime.RealtimeModel | None = None,
     ) -> None:
-        if llm is None:
-            from env import get_settings
+        from env import get_settings
 
-            settings = get_settings()
+        settings = get_settings()
+        self._gemini_31 = settings.gemini_live_model.startswith("gemini-3.1-")
+        if llm is None:
             llm = google.realtime.RealtimeModel(
                 model=settings.gemini_live_model,
                 voice="Puck",
@@ -65,9 +66,20 @@ class MemoraAgent(Agent):
 
         from schemas import ALL_FUNCTION_DECLARATIONS
 
+        disabled_tools = {
+            name.strip() for name in settings.gemini_live_disabled_tools.split(",") if name.strip()
+        }
+        declared_tools = {decl["name"] for decl in ALL_FUNCTION_DECLARATIONS}
+        unknown_tools = disabled_tools - declared_tools
+        if unknown_tools:
+            unknown = ", ".join(sorted(unknown_tools))
+            raise ValueError(f"GEMINI_LIVE_DISABLED_TOOLS contains unknown tool(s): {unknown}")
+
         tools = []
         for decl in ALL_FUNCTION_DECLARATIONS:
             name = decl["name"]
+            if name in disabled_tools:
+                continue
             handler = self._dispatch(name)
             schema = {
                 "name": name,
@@ -79,9 +91,10 @@ class MemoraAgent(Agent):
         instructions = SYSTEM_INSTRUCTION.replace("{{context_package}}", "(belum ada konteks)")
         super().__init__(instructions=instructions, llm=llm, tools=tools)
         log.info(
-            "MemoraAgent constructed: instructions=%d chars, tools=%d, tool_ctx=%s, on_extract=%s, context_engine=%s, planner=%s",
+            "MemoraAgent constructed: instructions=%d chars, tools=%d, disabled_tools=%s, tool_ctx=%s, on_extract=%s, context_engine=%s, planner=%s",
             len(instructions),
             len(tools),
+            ",".join(sorted(disabled_tools)) or "none",
             "wired" if tool_ctx else "None",
             "wired" if on_extract else "None",
             "wired" if context_engine else "None",
@@ -91,6 +104,11 @@ class MemoraAgent(Agent):
     async def on_enter(self) -> None:
         """Called when agent becomes active. Build context, fold into greeting."""
         log.info("on_enter: agent becoming active")
+        if self._gemini_31:
+            # Gemini 3.1 rejects generate_reply() after session setup. Voice turns and
+            # tool calls still work, but greetings and injected memory context do not.
+            log.info("on_enter: Gemini 3.1; skipping unsupported greeting/context injection")
+            return
         greeting = "Sapa pengguna dengan singkat dalam Bahasa Indonesia."
         if self._context_engine is not None:
             try:
@@ -191,6 +209,9 @@ class MemoraAgent(Agent):
 
     async def _on_proactive(self, text: str) -> None:
         """Planner callback — inject a proactive prompt via generate_reply."""
+        if self._gemini_31:
+            log.info("on_proactive: Gemini 3.1; skipping unsupported generate_reply")
+            return
         log.info("on_proactive: %s", text[:200])
         await self.session.generate_reply(instructions=text)
 
