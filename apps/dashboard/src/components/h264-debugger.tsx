@@ -30,8 +30,13 @@ export function H264Debugger() {
   const [frameCount, setFrameCount] = useState(0);
   const [dimensions, setDimensions] = useState("—");
   const [lastFrame, setLastFrame] = useState("—");
+  const [logs, setLogs] = useState<string[]>([]);
 
   const roomRef = useRef<Room | null>(null);
+
+  const log = useCallback((line: string) => {
+    setLogs((prev) => [...prev.slice(-80), `${new Date().toLocaleTimeString()}  ${line}`]);
+  }, []);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const frameCountRef = useRef(0);
   const rafRef = useRef<number | null>(null);
@@ -66,12 +71,14 @@ export function H264Debugger() {
       track.attach(videoRef.current);
       setTrackState("H.264 track attached");
       setMessage("Receiving encoded video from LiveKit");
+      log(`track attached: ${track.sid} (${track.source})`);
       startFrameProbe();
     },
-    [startFrameProbe],
+    [log, startFrameProbe],
   );
 
   const disconnect = useCallback(async () => {
+    log("stopping receiver");
     stopFrameProbe();
     videoRef.current?.pause();
     videoRef.current?.removeAttribute("src");
@@ -81,7 +88,8 @@ export function H264Debugger() {
     setStatus("idle");
     setTrackState("waiting for remote video");
     setMessage("No receiver attached");
-  }, [stopFrameProbe]);
+    log("disconnected");
+  }, [log, stopFrameProbe]);
 
   const connect = useCallback(async () => {
     if (roomRef.current || !roomName.trim()) return;
@@ -90,6 +98,7 @@ export function H264Debugger() {
     setTrackState("joining room");
     setFrameCount(0);
     frameCountRef.current = 0;
+    log(`joining room "${roomName.trim()}"`);
 
     try {
       const response = await fetch("/api/token", {
@@ -98,6 +107,7 @@ export function H264Debugger() {
         body: JSON.stringify({ room_name: roomName.trim(), identity: MONITOR_IDENTITY }),
       });
       if (!response.ok) throw new Error(`token route ${response.status}`);
+      log(`token route ${response.status}`);
 
       const { server_url: serverUrl, token } = await response.json();
       const room = new Room({ adaptiveStream: false, dynacast: false });
@@ -105,17 +115,20 @@ export function H264Debugger() {
 
       room.on(RoomEvent.TrackSubscribed, (track, _publication, _participant) => {
         if (track.kind === Track.Kind.Video) {
+          log(`subscribed: ${track.sid} video`);
           attachRemoteVideo(track as RemoteTrack);
         }
       });
       room.on(RoomEvent.TrackUnsubscribed, (track) => {
         if (track.kind === Track.Kind.Video) {
+          log(`unsubscribed: ${track.sid} video`);
           if (videoRef.current) track.detach(videoRef.current);
           stopFrameProbe();
           setTrackState("remote video detached");
         }
       });
       room.on(RoomEvent.Disconnected, () => {
+        log("room disconnected");
         roomRef.current = null;
         setStatus("idle");
         setTrackState("waiting for remote video");
@@ -126,6 +139,10 @@ export function H264Debugger() {
       setStatus("connected");
       setMessage(`Listening to ${room.name}`);
       setTrackState("connected; waiting for video track");
+      log(`connected to room "${room.name}"`);
+      log(
+        `remote participants: ${Array.from(room.remoteParticipants.keys()).join(", ") || "none"}`,
+      );
 
       for (const publication of room.remoteParticipants.values()) {
         for (const remotePublication of publication.trackPublications.values()) {
@@ -135,11 +152,12 @@ export function H264Debugger() {
         }
       }
     } catch (error) {
+      log(`error: ${error instanceof Error ? error.message : String(error)}`);
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "Unable to connect");
       roomRef.current = null;
     }
-  }, [attachRemoteVideo, roomName, stopFrameProbe]);
+  }, [attachRemoteVideo, log, roomName, stopFrameProbe]);
 
   useEffect(() => {
     return () => {
@@ -289,6 +307,20 @@ export function H264Debugger() {
               </button>
             </div>
           </aside>
+        </section>
+
+        <section className="mt-5 border border-[#343b31] bg-[#0e110e]">
+          <div className="flex items-center justify-between border-b border-[#343b31] px-5 py-3">
+            <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-[#87917a]">
+              receiver log
+            </p>
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#727a6e]">
+              {logs.length} lines
+            </span>
+          </div>
+          <pre className="h-52 overflow-auto px-5 py-4 font-mono text-[11px] leading-5 text-[#a7aaa0]">
+            {logs.length ? logs.join("\n") : "no events logged yet"}
+          </pre>
         </section>
 
         <footer className="mt-8 flex flex-col gap-2 border-t border-[#343731] pt-5 font-mono text-[10px] uppercase tracking-[0.16em] text-[#727a6e] sm:flex-row sm:justify-between">
