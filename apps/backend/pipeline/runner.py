@@ -2,12 +2,12 @@
 
 memory_pipeline.md §1–7. Async, event-triggered (by the ObservationEngine on a fused
 CurrentContext with substantive speech, or by end-of-turn). This module is the single
-entry point that turns a piece of conversation text into graph + episodic records.
+entry point that turns a piece of conversation text into graph + extracted fact records.
 
     uv run python -m pipeline.runner
 
 Phase 4 verify: synthetic "I'm Asep, I work at Tokopedia, I like sushi" → Neo4j
-Person:Asep with WORKS_AT+LIKES edges + a Postgres episodic message.
+Person:Asep with WORKS_AT+LIKES edges + Postgres extracted facts.
 """
 
 from __future__ import annotations
@@ -128,12 +128,17 @@ async def _verify() -> None:  # pragma: no cover
     assert any(t == "LIKES" for t, _ in rel_types), f"LIKES edge missing; rels={rels}"
     print(f"neo4j edges: {sorted(str(t) for t in rel_types)}")
 
-    # Verify Postgres: an episodic message was persisted under the session.
+    # Verify Postgres: extracted facts were persisted under the session. Conversation
+    # messages are persisted by the LiveKit gateway at turn boundaries.
     from uuid import UUID
 
-    msgs = await mem.conversation_history(UUID(sid))
-    assert any("Tokopedia" in m["content"] for m in msgs), f"episodic message missing; msgs={msgs}"
-    print(f"postgres: {len(msgs)} episodic message(s) persisted")
+    from postgres.repositories import FactRepo
+    from postgres.session import get_sessionmaker
+
+    async with get_sessionmaker()() as db:
+        facts = await FactRepo().list_recent(db, session_id=UUID(sid))
+    assert any("Tokopedia" in fact.fact for fact in facts), f"extracted fact missing; facts={facts}"
+    print(f"postgres: {len(facts)} extracted fact(s) persisted")
 
     await pg_session.close_engine()
     await neo4j_client.close_driver()
