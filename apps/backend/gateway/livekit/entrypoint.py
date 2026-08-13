@@ -243,6 +243,8 @@ async def entrypoint(ctx: JobContext) -> None:
                     log.info("display.show → publishing %d chars to topic=display", len(text))
                     asyncio.create_task(display.show(text))
                     asyncio.create_task(agent_log.emit("assistant", text))
+                    if session_id:
+                        asyncio.create_task(_persist_message(session_id, "assistant", text))
                 else:
                     log.debug("assistant message has no text content, skipping display")
             # Extraction + periodic context refresh: fire on user messages (turn boundary)
@@ -252,6 +254,8 @@ async def entrypoint(ctx: JobContext) -> None:
                     log.info("user turn detected, queuing extraction: %r", text[:200])
                     _extract_pending.append(text)
                     _schedule_extract(session_id)
+                    if session_id:
+                        asyncio.create_task(_persist_message(session_id, "user", text))
                     _user_turn_count += 1
                     if _user_turn_count % _CONTEXT_REFRESH_INTERVAL == 0:
                         log.info("turn %d → refreshing context", _user_turn_count)
@@ -260,6 +264,18 @@ async def entrypoint(ctx: JobContext) -> None:
                     log.debug("user message has no text content, skipping extraction")
         except Exception:  # noqa: BLE001
             log.debug("conversation_item_added parse failed", exc_info=True)
+
+    async def _persist_message(sid: str, role: str, content: str) -> None:
+        """Persist a turn to episodic memory (conversation_messages)."""
+        from uuid import UUID
+
+        from services import MemoryService
+
+        try:
+            await MemoryService().add_message(session_id=UUID(sid), role=role, content=content)
+            log.info("persisted %s message: %r", role, content[:80])
+        except Exception:  # noqa: BLE001
+            log.warning("message persist failed (role=%s): %s", role, exc_info=True)
 
     # --- Wire track handlers for InsightFace (video only) ---
     @room.on("track_subscribed")
