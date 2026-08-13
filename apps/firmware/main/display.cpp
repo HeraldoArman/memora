@@ -8,6 +8,9 @@
 
 #include "driver/i2c_master.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 
 #include "hardware.h"
 
@@ -15,16 +18,29 @@ namespace {
 constexpr char kTag[] = "memora-display";
 constexpr int kWidth = 128;
 constexpr int kHeight = 64;
-constexpr int kGlyphWidth = 5;
-constexpr int kGlyphHeight = 7;
-constexpr int kGlyphSpacing = 1;
-constexpr int kLineHeight = 8;
-constexpr int kMaxColumns = kWidth / (kGlyphWidth + kGlyphSpacing);
-constexpr int kMaxLines = kHeight / kLineHeight;
+// Slightly enlarge the original 5x7 glyphs while keeping the text readable.
+constexpr int kGlyphScale = 2;
+constexpr int kGlyphWidth = 5 * kGlyphScale;
+constexpr int kGlyphHeight = 7 * kGlyphScale;
+constexpr int kGlyphSpacing = 2;
+constexpr int kTextRightMargin = 2;
+// Keep more than half of the 128-pixel display empty on the left. Text is
+// right-aligned in the remaining area so short messages begin near the edge.
+constexpr int kTextStartX = (kWidth / 2) + 4;
+constexpr int kTextRightX = kWidth - kTextRightMargin;
 constexpr std::size_t kBufferSize = kWidth * kHeight / 8;
+constexpr std::size_t kMaxTextLength = 512;
+// Keep the same effective speed as the 5 ms/1-pixel setting without
+// redrawing the entire OLED often enough to starve the idle task.
+constexpr int kMarqueeStepPixels = 4;
+constexpr int kMarqueeIntervalMs = 20;
 
 i2c_master_bus_handle_t s_bus = nullptr;
 i2c_master_dev_handle_t s_oled = nullptr;
+SemaphoreHandle_t s_text_mutex = nullptr;
+std::array<char, kMaxTextLength> s_text{};
+std::size_t s_text_length = 0;
+int s_marquee_offset = 0;
 
 std::array<uint8_t, kGlyphHeight> glyph(char character) {
     // Native 5x7 font. The renderer accepts lowercase, uppercase, digits, and
@@ -112,10 +128,12 @@ void write_command(uint8_t command) {
 }
 
 void write_data(const uint8_t* data, std::size_t length) {
-    std::array<uint8_t, 17> packet{};
+    // SSD1306 accepts a full page in one I2C transaction. Sending 128 bytes
+    // at once avoids dozens of short transactions per marquee frame.
+    std::array<uint8_t, kWidth + 1> packet{};
     packet[0] = 0x40;
     while (length > 0) {
-        const std::size_t chunk = std::min<std::size_t>(length, packet.size() - 1);
+        const std::size_t chunk = std::min<std::size_t>(length, kWidth);
         std::copy(data, data + chunk, packet.begin() + 1);
         const esp_err_t err = i2c_master_transmit(s_oled, packet.data(), chunk + 1, 100);
         if (err != ESP_OK) {
@@ -127,63 +145,75 @@ void write_data(const uint8_t* data, std::size_t length) {
     }
 }
 
-void render_text(const uint8_t* payload, std::size_t length) {
+void render_frame(const char* text, std::size_t length, int marquee_offset) {
     std::array<uint8_t, kBufferSize> buffer{};
-    std::array<std::array<char, kMaxColumns>, kMaxLines> lines{};
-    std::array<int, kMaxLines> line_lengths{};
-    int line = 0;
-    int column = 0;
+    const int origin_y = (kHeight - kGlyphHeight) / 2;
+    const int origin_x = kTextRightX - marquee_offset;
+    const int character_advance = kGlyphWidth + kGlyphSpacing;
 
-    for (std::size_t index = 0; index < length && line < kMaxLines; ++index) {
-        const char character = static_cast<char>(payload[index]);
-        if (character == '\r') {
-            continue;
-        }
-        if (character == '\n' || column == kMaxColumns) {
-            ++line;
-            column = 0;
-            if (line == kMaxLines) {
-                break;
-            }
-            if (character == '\n') {
-                continue;
-            }
-        }
-        lines[line][column++] = character;
-        line_lengths[line] = column;
-    }
-
-    const int line_count = std::max(1, std::min(kMaxLines, line + 1));
-    const int origin_y = (kHeight - line_count * kLineHeight + 1) / 2;
-    for (int current_line = 0; current_line < line_count; ++current_line) {
-        const int text_width = line_lengths[current_line] == 0
-                                   ? 0
-                                   : line_lengths[current_line] * (kGlyphWidth + kGlyphSpacing) -
-                                         kGlyphSpacing;
-        const int origin_x = (kWidth - text_width) / 2;
-        for (int character_index = 0; character_index < line_lengths[current_line];
-             ++character_index) {
-            const auto rows = glyph(lines[current_line][character_index]);
-            for (int row = 0; row < kGlyphHeight; ++row) {
-                for (int column_index = 0; column_index < kGlyphWidth; ++column_index) {
-                    if ((rows[row] & (1U << (kGlyphWidth - 1 - column_index))) == 0) {
+    for (std::size_t character_index = 0; character_index < length; ++character_index) {
+        const auto rows = glyph(text[character_index]);
+        for (int source_row = 0; source_row < 7; ++source_row) {
+            for (int source_column = 0; source_column < 5; ++source_column) {
+                    if ((rows[source_row] & (1U << (4 - source_column))) == 0) {
                         continue;
                     }
-                    const int pixel_x = origin_x + character_index * (kGlyphWidth + kGlyphSpacing) +
-                                        column_index;
-                    const int pixel_y = origin_y + current_line * kLineHeight + row;
-                    buffer[(pixel_y / 8) * kWidth + pixel_x] |=
-                        static_cast<uint8_t>(1U << (pixel_y % 8));
+                    for (int y_scale = 0; y_scale < kGlyphScale; ++y_scale) {
+                        for (int x_scale = 0; x_scale < kGlyphScale; ++x_scale) {
+                            const int pixel_x = origin_x +
+                                                static_cast<int>(character_index) * character_advance +
+                                                source_column * kGlyphScale + x_scale;
+                            const int pixel_y = origin_y + source_row * kGlyphScale + y_scale;
+                            if (pixel_x < kTextStartX || pixel_x >= kTextRightX ||
+                                pixel_y < 0 || pixel_y >= kHeight) {
+                                continue;
+                            }
+                            buffer[(pixel_y / 8) * kWidth + pixel_x] |=
+                                static_cast<uint8_t>(1U << (pixel_y % 8));
+                        }
+                    }
                 }
             }
         }
-    }
 
     for (uint8_t page = 0; page < kHeight / 8; ++page) {
         write_command(static_cast<uint8_t>(0xB0 | page));
         write_command(0x00);
         write_command(0x10);
         write_data(buffer.data() + page * kWidth, kWidth);
+    }
+}
+
+void marquee_task(void*) {
+    std::array<char, kMaxTextLength> text{};
+    for (;;) {
+        std::size_t length = 0;
+        int offset = 0;
+        if (s_text_mutex != nullptr && xSemaphoreTake(s_text_mutex, portMAX_DELAY) == pdTRUE) {
+            length = s_text_length;
+            offset = s_marquee_offset;
+            if (length > 0) {
+                std::copy_n(s_text.data(), length, text.data());
+            }
+            xSemaphoreGive(s_text_mutex);
+        }
+
+        if (length > 0 && s_oled != nullptr) {
+            render_frame(text.data(), length, offset);
+            const int total_width = static_cast<int>(length) * (kGlyphWidth + kGlyphSpacing);
+            const int loop_width = total_width + (kTextRightX - kTextStartX);
+            if (s_text_mutex != nullptr && xSemaphoreTake(s_text_mutex, portMAX_DELAY) == pdTRUE) {
+                if (s_text_length == length &&
+                    std::equal(text.begin(), text.begin() + length, s_text.begin())) {
+                    s_marquee_offset += kMarqueeStepPixels;
+                    if (s_marquee_offset >= loop_width) {
+                        s_marquee_offset = 0;
+                    }
+                }
+                xSemaphoreGive(s_text_mutex);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(kMarqueeIntervalMs));
     }
 }
 }  // namespace
@@ -216,11 +246,15 @@ void init() {
     }
 
     constexpr uint8_t commands[] = {0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00,
-                                    0x40, 0x8D, 0x14, 0x20, 0x00, 0xA1, 0xC8,
+                                    0x40, 0x8D, 0x14, 0x20, 0x00, 0xA0, 0xC0,
                                     0xDA, 0x12, 0x81, 0x7F, 0xD9, 0xF1, 0xDB,
                                     0x40, 0xA4, 0xA6, 0xAF};
     for (uint8_t command : commands) {
         write_command(command);
+    }
+    s_text_mutex = xSemaphoreCreateMutex();
+    if (s_text_mutex != nullptr) {
+        xTaskCreate(marquee_task, "oled_marquee", 4096, nullptr, 3, nullptr);
     }
     ESP_LOGI(kTag, "OLED ready on SDA=%d SCL=%d I2C port=%d", hardware::kOledSda,
              hardware::kOledScl, hardware::kOledI2cPort);
@@ -233,7 +267,16 @@ void show(const uint8_t* payload, std::size_t length) {
     const std::size_t preview_length = std::min<std::size_t>(length, 120);
     ESP_LOGI(kTag, "display <- len=%u text=%.*s", static_cast<unsigned>(length),
              static_cast<int>(preview_length), reinterpret_cast<const char*>(payload));
-    render_text(payload, length);
+    if (s_text_mutex == nullptr || xSemaphoreTake(s_text_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return;
+    }
+    s_text_length = std::min<std::size_t>(length, kMaxTextLength);
+    for (std::size_t index = 0; index < s_text_length; ++index) {
+        const char character = static_cast<char>(payload[index]);
+        s_text[index] = (character == '\r' || character == '\n') ? ' ' : character;
+    }
+    s_marquee_offset = 0;
+    xSemaphoreGive(s_text_mutex);
 }
 
 void show(const char* text) {

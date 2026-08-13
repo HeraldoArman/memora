@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "cJSON.h"
+#include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
@@ -70,6 +71,7 @@ bool fetch_dashboard_token() {
     config.url = CONFIG_MEMORA_TOKEN_URL;
     config.method = HTTP_METHOD_POST;
     config.timeout_ms = 10000;
+    config.crt_bundle_attach = esp_crt_bundle_attach;
     config.event_handler = on_token_http_event;
     config.user_data = &s_token_response;
     esp_http_client_handle_t client = esp_http_client_init(&config);
