@@ -46,7 +46,7 @@ export function H264Debugger() {
 
   const stopFrameProbe = useCallback(() => {
     if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
+      clearInterval(rafRef.current);
       rafRef.current = null;
     }
   }, []);
@@ -56,16 +56,16 @@ export function H264Debugger() {
     const video = videoRef.current;
     if (!video) return;
 
-    const probe = () => {
+    // ponytail: 1s interval matches the ESP32's 1 FPS capture rate.
+    // requestAnimationFrame (60fps) would inflate the frame counter.
+    rafRef.current = window.setInterval(() => {
       if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
         frameCountRef.current += 1;
         setFrameCount(frameCountRef.current);
         setLastFrame(new Date().toLocaleTimeString());
         setDimensions(`${video.videoWidth || "—"} × ${video.videoHeight || "—"}`);
       }
-      rafRef.current = requestAnimationFrame(probe);
-    };
-    rafRef.current = requestAnimationFrame(probe);
+    }, 1000);
   }, [stopFrameProbe]);
 
   const attachRemoteVideo = useCallback(
