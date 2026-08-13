@@ -388,9 +388,10 @@ class TestSystemRepo:
 class TestPipelineConsolidatorIntegration:
     """The consolidator writes through real services into Postgres + Neo4j. A mock
     extractor feeds deterministic structured knowledge; we verify the graph + episodic
-    records land in the real stores (the wiring unit tests mock)."""
+    records land in the real stores (the wiring unit tests mock). Conversation messages
+    are persisted separately by the LiveKit gateway at turn boundaries."""
 
-    async def test_consolidate_writes_graph_and_episode(self) -> None:
+    async def test_consolidate_writes_graph_and_facts(self) -> None:
 
         # Names must survive resolve_name/normalize unchanged. normalize() title-cases
         # then lowercases mixed-case tokens, so use simple Title-cased single words.
@@ -441,9 +442,10 @@ class TestPipelineConsolidatorIntegration:
         assert summary["entities"] == 3
         assert summary["relationships"] == 2
 
-        # Episodic message persisted
-        hist = await mem.conversation_history(UUID(sid))
-        assert any(person_canon in m["content"] for m in hist)
+        # Extracted fact persisted. The LiveKit gateway owns episodic message persistence.
+        async with get_sessionmaker()() as db:
+            facts = await FactRepo().list_recent(db, session_id=UUID(sid), limit=10)
+        assert any(person_canon in fact.fact for fact in facts)
 
         # Graph: person reachable by the id the consolidator registered
         pid = summary["person_ids"][person_canon]
