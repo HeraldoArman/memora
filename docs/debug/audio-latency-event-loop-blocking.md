@@ -247,6 +247,27 @@ the LiveKit plugin documents as unsupported: post-setup `generate_reply()` for g
 proactive planner prompts, and dashboard text prompts. Normal microphone turns and tool
 calls remain supported.
 
+### Context And Extraction Follow-Up
+
+The Gemini 3.1 session cannot accept a context update after it starts. The full-agent
+entrypoint now builds the initial retrieval package before `MemoraAgent` is constructed
+and passes it as initial `RealtimeModel` instructions, restoring the proposal's
+Memory OS -> retrieval -> reasoning path for the first voice turn. Later retrieval remains
+available through tools.
+
+During the 2026-08-13 full-mode session, the pipeline was enabled and did persist the
+calendar/reminder turn, but several extraction requests failed with Gemini `503`, `504`,
+and `499` responses. The local text model is set to the stable `gemini-2.5-flash` rather
+than `gemini-flash-latest` for extraction and summarization. Unrelated conversation from
+another speaker was also transcribed and processed as user speech, so it can create noisy
+memories; the device currently has no speaker/identity diarization.
+
+The system instruction now requires proactive retrieval before answers about visible people,
+past memories, schedules, reminders, and current scene/activity. It also tells the agent not
+to store unclear background conversation or information that may belong to another person
+without short confirmation. This is instruction-level mitigation only; robust speaker
+diarization remains future work.
+
 ## References
 
 - `logs/worker.log` lines 90-213 — the symptom window (frames 4-21, the `:09→:14` stall,

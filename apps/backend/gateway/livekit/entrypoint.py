@@ -194,6 +194,18 @@ async def entrypoint(ctx: JobContext) -> None:
     context_engine = ContextEngine(retriever=retriever)
     log.info("context engine created (retriever with text embedder + index)")
 
+    # Gemini 3.1 only accepts instructions during initial session setup. Build the
+    # retrieval package here so it becomes part of the model's initial instructions.
+    initial_context = None
+    if settings.gemini_live_model.startswith("gemini-3.1-"):
+        try:
+            _pkg, initial_context = await context_engine.build()
+            log.info("Gemini 3.1 initial context built (%d chars)", len(initial_context))
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "Gemini 3.1 initial context build failed; starting without it", exc_info=True
+            )
+
     # --- Create proactive planner (Step 4) ---
     from reasoning.planner.planner import ProactivePlanner
 
@@ -215,6 +227,7 @@ async def entrypoint(ctx: JobContext) -> None:
         context_engine=context_engine,
         planner=planner,
         on_log=agent_log.emit,
+        initial_context=initial_context,
     )
     log.info("MemoraAgent created")
 

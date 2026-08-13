@@ -42,17 +42,23 @@ class MemoraAgent(Agent):
         context_engine: Any = None,
         planner: Any = None,
         on_log: Callable[[str, str], Awaitable[None]] | None = None,
+        initial_context: str | None = None,
         llm: google.realtime.RealtimeModel | None = None,
     ) -> None:
         from env import get_settings
 
         settings = get_settings()
         self._gemini_31 = settings.gemini_live_model.startswith("gemini-3.1-")
+        instructions = SYSTEM_INSTRUCTION.replace(
+            "{{context_package}}", initial_context or "(belum ada konteks)"
+        )
         if llm is None:
             llm = google.realtime.RealtimeModel(
                 model=settings.gemini_live_model,
                 voice="Puck",
                 api_key=settings.gemini_api_key,
+                # Gemini 3.1 accepts instructions only while the realtime session starts.
+                instructions=instructions,
             )
 
         # Set instance attrs BEFORE super().__init__ so _dispatch closures capture self
@@ -88,11 +94,11 @@ class MemoraAgent(Agent):
             }
             tools.append(function_tool(handler, raw_schema=schema))
 
-        instructions = SYSTEM_INSTRUCTION.replace("{{context_package}}", "(belum ada konteks)")
         super().__init__(instructions=instructions, llm=llm, tools=tools)
         log.info(
-            "MemoraAgent constructed: instructions=%d chars, tools=%d, disabled_tools=%s, tool_ctx=%s, on_extract=%s, context_engine=%s, planner=%s",
+            "MemoraAgent constructed: instructions=%d chars, initial_context=%s, tools=%d, disabled_tools=%s, tool_ctx=%s, on_extract=%s, context_engine=%s, planner=%s",
             len(instructions),
+            "wired" if initial_context else "empty",
             len(tools),
             ",".join(sorted(disabled_tools)) or "none",
             "wired" if tool_ctx else "None",
@@ -105,9 +111,9 @@ class MemoraAgent(Agent):
         """Called when agent becomes active. Build context, fold into greeting."""
         log.info("on_enter: agent becoming active")
         if self._gemini_31:
-            # Gemini 3.1 rejects generate_reply() after session setup. Voice turns and
-            # tool calls still work, but greetings and injected memory context do not.
-            log.info("on_enter: Gemini 3.1; skipping unsupported greeting/context injection")
+            # Gemini 3.1 rejects generate_reply() after session setup. The entrypoint
+            # injects its initial context above before the realtime session begins.
+            log.info("on_enter: Gemini 3.1; initial context already seeded, skipping greeting")
             return
         greeting = "Sapa pengguna dengan singkat dalam Bahasa Indonesia."
         if self._context_engine is not None:

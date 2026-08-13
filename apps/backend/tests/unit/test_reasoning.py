@@ -47,6 +47,15 @@ class TestSystemPrompt:
         base = build_system_instruction("")
         assert "SELALU" in base and "search_person" in base and "register_person" in base
 
+    def test_contains_proactive_tool_guidance(self) -> None:
+        base = build_system_instruction("")
+        assert "Aturan penggunaan alat secara proaktif" in base
+        assert "visible_people" in base
+        assert "search_memory atau similar_memories" in base
+        assert "search_schedule dan/atau today_reminders" in base
+        assert "current_scene atau current_activity" in base
+        assert "percakapan latar belakang" in base
+
 
 class TestMemoraAgent:
     @pytest.fixture(autouse=True)
@@ -143,6 +152,14 @@ class TestMemoraAgent:
             mock_session.generate_reply.assert_not_awaited()
         finally:
             del type(agent).session
+
+    def test_gemini_31_initial_context_is_in_model_instructions(self, monkeypatch) -> None:
+        monkeypatch.setenv("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")
+        from env import get_settings
+
+        get_settings.cache_clear()
+        agent = MemoraAgent(tool_ctx=ToolContext(), initial_context="Fakta: Asep suka sushi")
+        assert "Fakta: Asep suka sushi" in agent.instructions
 
     async def test_on_enter_context_build_exception_keeps_static(self) -> None:
         ctx = ToolContext()
