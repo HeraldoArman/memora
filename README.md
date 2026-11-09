@@ -1,5 +1,8 @@
 # Memora
 
+> 🏆 **Winner — RISTEK Hackathon**
+> Awarded a 20,000,000 IDR seed grant
+
 Context-aware AI memory assistant for people living with dementia. A wearable ESP32-S3 streams camera and audio to the cloud through LiveKit; a FastAPI backend performs face recognition, scene understanding, and speech transcription, builds long-term memories (semantic + episodic), and reasons with Gemini to answer questions and proactively remind — all surfaced in real time to a multi-caregiver web dashboard.
 
 Python + C++ monorepo. Backend (FastAPI + LiveKit agent), web dashboard (Next.js), and ESP32-S3 firmware (skeleton).
